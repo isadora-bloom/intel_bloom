@@ -5,7 +5,7 @@
  */
 
 import { createClient } from "@supabase/supabase-js";
-import Anthropic from "anthropic";
+import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 
 const supabase = createClient(

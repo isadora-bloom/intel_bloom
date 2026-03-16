@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",
-    "anthropic": "^0.17.0",
+    "@anthropic-ai/sdk": "^0.20.0",
     "axios": "^1.6.0",
     "csv-parse": "^5.5.0",
     "date-fns": "^3.3.0",

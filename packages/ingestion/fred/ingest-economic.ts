@@ -6,7 +6,7 @@
  */
 
 import { createClient } from "@supabase/supabase-js";
-import Anthropic from "anthropic";
+import Anthropic from "@anthropic-ai/sdk";
 
 const FRED_BASE = "https://api.stlouisfed.org/fred";
 const FRED_KEY = process.env.FRED_API_KEY!;
