@@ -1,0 +1,597 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["multiSchema"]
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+  schemas   = ["public", "auth"]
+}
+
+// ============================================================
+// VENUES
+// ============================================================
+model Venue {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  name        String
+  slug        String   @unique
+  addressLine1 String? @map("address_line1")
+  addressLine2 String? @map("address_line2")
+  city        String
+  state       String   @db.VarChar(2)
+  zip         String
+  lat         Decimal? @db.Decimal(9, 6)
+  lng         Decimal? @db.Decimal(9, 6)
+
+  // Location calibration
+  noaaStationId    String? @map("noaa_station_id")
+  noaaStationName  String? @map("noaa_station_name")
+  fedDistrict      Int?    @map("fed_district")
+  googleTrendsMetro String? @map("google_trends_metro")
+  competitorRadiusMiles Int @default(30) @map("competitor_radius_miles")
+
+  // Subscription
+  plan               String  @default("founder")
+  monthlyPriceCents  Int     @default(25000) @map("monthly_price_cents")
+
+  // Integrations
+  honeybookApiKey  String? @map("honeybook_api_key")
+  knotVenueId      String? @map("knot_venue_id")
+  googlePlaceId    String? @map("google_place_id")
+  timezone         String  @default("America/New_York")
+  onboardingComplete Boolean @default(false) @map("onboarding_complete")
+
+  // Aggregate pool
+  contributesToBenchmark Boolean @default(true) @map("contributes_to_benchmark")
+
+  // Relations
+  venueUsers            VenueUser[]
+  clients               Client[]
+  inquiries             Inquiry[]
+  tours                 Tour[]
+  uploads               Upload[]
+  planningEvents        PlanningEvent[]
+  vendors               Vendor[]
+  clientVendors         ClientVendor[]
+  annotations           Annotation[]
+  weatherForecasts      WeatherForecast[]
+  competitorLandscapes  MacroCompetitorLandscape[]
+  matchingQueue         MatchingQueue[]
+  patternBenchmarks     PatternBenchmark[]
+  marketPulse           MarketPulse[]
+  sourceTouchpoints     ClientSourceTouchpoint[]
+
+  @@map("venues")
+}
+
+// ============================================================
+// VENUE USERS
+// ============================================================
+model VenueUser {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId   String   @map("venue_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  role      String   @default("member")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  venue Venue @relation(fields: [venueId], references: [id], onDelete: Cascade)
+
+  @@unique([venueId, userId])
+  @@map("venue_users")
+}
+
+// ============================================================
+// CLIENTS
+// ============================================================
+model Client {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId   String   @map("venue_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Identity
+  namePrimary   String  @map("name_primary")
+  namePartner   String? @map("name_partner")
+  emailPrimary  String? @map("email_primary")
+  emailPartner  String? @map("email_partner")
+  phonePrimary  String? @map("phone_primary")
+  phonePartner  String? @map("phone_partner")
+
+  // Event
+  eventDate          DateTime? @map("event_date") @db.Date
+  eventDateConfirmed Boolean   @default(false) @map("event_date_confirmed")
+  package            String?
+  guestCountInitial  Int?      @map("guest_count_initial")
+  guestCountFinal    Int?      @map("guest_count_final")
+  revenueCents       Int?      @map("revenue_cents")
+
+  // Status
+  status String @default("inquiry")
+
+  // Matching
+  confidenceScore Int @default(100) @map("confidence_score")
+
+  // Source
+  firstTouchPlatform          String?   @map("first_touch_platform")
+  firstTouchDate              DateTime? @map("first_touch_date") @db.Timestamptz(6)
+  selfReportedSource          String?   @map("self_reported_source")
+  resolvedSource              String?   @map("resolved_source")
+  resolvedSourceConfidence    Int?      @map("resolved_source_confidence")
+  acquisitionCostCents        Int?      @map("acquisition_cost_cents")
+  referrerClientId            String?   @map("referrer_client_id") @db.Uuid
+  referrerName                String?   @map("referrer_name")
+  competingVenues             String[]  @map("competing_venues")
+
+  // Pre-inquiry session
+  sessionPagesVisited String[]  @map("session_pages_visited")
+  sessionCount        Int?      @map("session_count")
+  sessionSourceUrl    String?   @map("session_source_url")
+  sessionData         Json?     @map("session_data")
+
+  // Planning scores
+  complexityScore     Int?  @map("complexity_score")
+  stressFlags         Json? @map("stress_flags")
+  familyDynamicsFlags Json? @map("family_dynamics_flags")
+
+  // Event layer
+  weatherEventDate      Json?  @map("weather_event_date")
+  weatherDifficultyScore Int?  @map("weather_difficulty_score")
+  staffingHoursActual   Int?   @map("staffing_hours_actual")
+  dayOfComplexity       Int?   @map("day_of_complexity")
+
+  // Reputation
+  reviewLeft          Boolean?  @map("review_left")
+  reviewPlatform      String?   @map("review_platform")
+  reviewStarRating    Decimal?  @map("review_star_rating") @db.Decimal(2, 1)
+  reviewDate          DateTime? @map("review_date") @db.Timestamptz(6)
+  reviewText          String?   @map("review_text")
+  reviewSentiment     String?   @map("review_sentiment")
+  reviewAdjustedScore Decimal?  @map("review_adjusted_score") @db.Decimal(3, 1)
+  socialReach         Json?     @map("social_reach")
+  referralsGenerated  Int       @default(0) @map("referrals_generated")
+
+  // Relations
+  venue           Venue                    @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  referrer        Client?                  @relation("ClientReferrals", fields: [referrerClientId], references: [id])
+  referredClients Client[]                 @relation("ClientReferrals")
+  sourceTouchpoints ClientSourceTouchpoint[]
+  inquiries       Inquiry[]
+  tours           Tour[]
+  uploads         Upload[]
+  planningEvents  PlanningEvent[]
+  clientVendors   ClientVendor[]
+  weatherForecasts WeatherForecast[]
+  matchingQueueA  MatchingQueue[]          @relation("MatchQueueRecordA")
+  matchingQueueB  MatchingQueue[]          @relation("MatchQueueRecordB")
+
+  @@map("clients")
+}
+
+// ============================================================
+// CLIENT SOURCE TOUCHPOINTS
+// ============================================================
+model ClientSourceTouchpoint {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId      String    @map("client_id") @db.Uuid
+  venueId       String    @map("venue_id") @db.Uuid
+  platform      String
+  touchpointDate DateTime? @map("touchpoint_date") @db.Timestamptz(6)
+  campaignId    String?   @map("campaign_id")
+  campaignName  String?   @map("campaign_name")
+  costCents     Int?      @map("cost_cents")
+  rawData       Json?     @map("raw_data")
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  venue  Venue  @relation(fields: [venueId], references: [id], onDelete: Cascade)
+
+  @@map("client_source_touchpoints")
+}
+
+// ============================================================
+// INQUIRIES
+// ============================================================
+model Inquiry {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId   String   @map("venue_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // Source
+  platform   String
+  externalId String? @map("external_id")
+  rawMessage String? @map("raw_message")
+
+  // Extracted signals
+  nameExtracted      String?   @map("name_extracted")
+  emailExtracted     String?   @map("email_extracted")
+  phoneExtracted     String?   @map("phone_extracted")
+  eventDateExtracted DateTime? @map("event_date_extracted") @db.Date
+  budgetExtracted    Int?      @map("budget_extracted")
+  guestCountExtracted Int?     @map("guest_count_extracted")
+
+  // Timing
+  receivedAt  DateTime? @map("received_at") @db.Timestamptz(6)
+  dayOfWeek   Int?      @map("day_of_week")
+  hourOfDay   Int?      @map("hour_of_day")
+
+  // Attribution
+  campaignId   String? @map("campaign_id")
+  sessionData  Json?   @map("session_data")
+
+  // Matching
+  matchedClientId   String? @map("matched_client_id") @db.Uuid
+  matchConfidence   Int?    @map("match_confidence")
+  matchStatus       String  @default("unmatched") @map("match_status")
+
+  // Response
+  responseSentAt       DateTime? @map("response_sent_at") @db.Timestamptz(6)
+  responseTimeMinutes  Int?      @map("response_time_minutes")
+
+  // Resolved attribution
+  selfReportedSource        String? @map("self_reported_source")
+  resolvedSource            String? @map("resolved_source")
+  resolvedSourceConfidence  Int?    @map("resolved_source_confidence")
+  sessionSourceUrl          String? @map("session_source_url")
+
+  venue         Venue   @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  matchedClient Client? @relation(fields: [matchedClientId], references: [id])
+
+  @@map("inquiries")
+}
+
+// ============================================================
+// TOURS
+// ============================================================
+model Tour {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId   String   @map("venue_id") @db.Uuid
+  clientId  String?  @map("client_id") @db.Uuid
+  scheduledAt DateTime? @map("scheduled_at") @db.Timestamptz(6)
+  tourType   String?  @map("tour_type")
+  completed  Boolean  @default(false)
+  cancelled  Boolean  @default(false)
+  cancelReason String? @map("cancel_reason")
+
+  // Intake
+  selfReportedSource String?  @map("self_reported_source")
+  competingVenues    String[] @map("competing_venues")
+
+  // Upload
+  uploadId  String? @map("upload_id") @db.Uuid
+  notesRaw  String? @map("notes_raw")
+
+  // Outcome
+  bookingDate           DateTime? @map("booking_date") @db.Date
+  bookingConversionDays Int?      @map("booking_conversion_days")
+
+  venue  Venue   @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  client Client? @relation(fields: [clientId], references: [id])
+
+  @@map("tours")
+}
+
+// ============================================================
+// UPLOADS
+// ============================================================
+model Upload {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId   String   @map("venue_id") @db.Uuid
+  clientId  String?  @map("client_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // File
+  fileName      String? @map("file_name")
+  fileType      String? @map("file_type")
+  fileSizeBytes Int?    @map("file_size_bytes")
+  storagePath   String? @map("storage_path")
+
+  // Processing
+  status             String @default("pending")
+  transcript         String?
+  extractedSignals   Json?  @map("extracted_signals")
+  confirmedSignals   Json?  @map("confirmed_signals")
+
+  // Metadata
+  uploadType  String?   @map("upload_type")
+  uploadDate  DateTime? @map("upload_date") @db.Timestamptz(6)
+
+  venue  Venue   @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  client Client? @relation(fields: [clientId], references: [id])
+
+  @@map("uploads")
+}
+
+// ============================================================
+// PLANNING EVENTS
+// ============================================================
+model PlanningEvent {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId   String   @map("venue_id") @db.Uuid
+  clientId  String   @map("client_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  eventType String   @map("event_type")
+  eventDate DateTime? @map("event_date") @db.Timestamptz(6)
+  metadata  Json?
+  source    String?
+
+  venue  Venue  @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@map("planning_events")
+}
+
+// ============================================================
+// VENDORS
+// ============================================================
+model Vendor {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId   String   @map("venue_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  name      String
+  category  String?
+  email     String?
+  website   String?
+
+  // Scorecard (calculated monthly)
+  appearancesCount          Int       @default(0)   @map("appearances_count")
+  avgReviewScore            Decimal?  @map("avg_review_score") @db.Decimal(3, 1)
+  avgComplexityScore        Int?      @map("avg_complexity_score")
+  referralsSent12m          Int       @default(0)   @map("referrals_sent_12m")
+  referralRevenueCents12m   Int       @default(0)   @map("referral_revenue_cents_12m")
+  referralConversionRate    Decimal?  @map("referral_conversion_rate") @db.Decimal(4, 2)
+  lastScorecardAt           DateTime? @map("last_scorecard_at") @db.Timestamptz(6)
+
+  venue         Venue          @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  clientVendors ClientVendor[]
+
+  @@map("vendors")
+}
+
+// ============================================================
+// CLIENT VENDORS (junction)
+// ============================================================
+model ClientVendor {
+  id       String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId  String @map("venue_id") @db.Uuid
+  clientId String @map("client_id") @db.Uuid
+  vendorId String @map("vendor_id") @db.Uuid
+
+  venue  Venue  @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  vendor Vendor @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+  @@unique([clientId, vendorId])
+  @@map("client_vendors")
+}
+
+// ============================================================
+// ANNOTATIONS
+// ============================================================
+model Annotation {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId   String   @map("venue_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by") @db.Uuid
+
+  // Period
+  periodStart DateTime @map("period_start") @db.Date
+  periodEnd   DateTime @map("period_end") @db.Date
+
+  // Classification
+  annotationType String  @map("annotation_type")
+  categoryDetail String? @map("category_detail")
+  notes          String?
+
+  // Origin
+  source String @default("human_proactive")
+
+  // Detection context
+  detectedSignal    String?  @map("detected_signal")
+  detectedValue     Decimal? @map("detected_value") @db.Decimal(10, 2)
+  detectedThreshold Decimal? @map("detected_threshold") @db.Decimal(10, 2)
+
+  // Treatment
+  excludeFromPatterns Boolean @default(false) @map("exclude_from_patterns")
+  excludeReason       String? @map("exclude_reason")
+  propagateToAggregate Boolean @default(true) @map("propagate_to_aggregate")
+
+  venue Venue @relation(fields: [venueId], references: [id], onDelete: Cascade)
+
+  @@map("annotations")
+}
+
+// ============================================================
+// WEATHER DATA
+// ============================================================
+model WeatherMonthly {
+  id             String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  noaaStationId  String  @map("noaa_station_id")
+  year           Int
+  month          Int
+  precipitationInches Decimal? @map("precipitation_inches") @db.Decimal(6, 2)
+  tempAvgF       Decimal? @map("temp_avg_f") @db.Decimal(5, 1)
+  tempMaxF       Decimal? @map("temp_max_f") @db.Decimal(5, 1)
+  tempMinF       Decimal? @map("temp_min_f") @db.Decimal(5, 1)
+  daysPrecipitation Int?  @map("days_precipitation")
+  weatherScore   Int?    @map("weather_score")
+
+  @@unique([noaaStationId, year, month])
+  @@map("weather_monthly")
+}
+
+model WeatherDaily {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  noaaStationId  String   @map("noaa_station_id")
+  date           DateTime @db.Date
+  precipitationInches Decimal? @map("precipitation_inches") @db.Decimal(6, 2)
+  tempMaxF       Decimal? @map("temp_max_f") @db.Decimal(5, 1)
+  tempMinF       Decimal? @map("temp_min_f") @db.Decimal(5, 1)
+  conditions     String?
+  difficultyScore Int?    @map("difficulty_score")
+
+  @@unique([noaaStationId, date])
+  @@map("weather_daily")
+}
+
+model WeatherForecast {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId         String   @map("venue_id") @db.Uuid
+  clientId        String?  @map("client_id") @db.Uuid
+  forecastDate    DateTime @map("forecast_date") @db.Date
+  pulledAt        DateTime @map("pulled_at") @db.Timestamptz(6)
+  precipProbability Int?   @map("precip_probability")
+  tempHighF       Int?     @map("temp_high_f")
+  tempLowF        Int?     @map("temp_low_f")
+  conditions      String?
+  alertTriggered  Boolean  @default(false) @map("alert_triggered")
+
+  venue Venue @relation(fields: [venueId], references: [id])
+
+  @@map("weather_forecasts")
+}
+
+// ============================================================
+// MACRO SIGNALS
+// ============================================================
+model MacroEconomic {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  signalType  String   @map("signal_type")
+  periodDate  DateTime @map("period_date") @db.Date
+  value       Decimal? @db.Decimal(10, 4)
+  geoScope    String   @map("geo_scope")
+  rawData     Json?    @map("raw_data")
+
+  @@unique([signalType, periodDate, geoScope])
+  @@map("macro_economic")
+}
+
+model MacroDemographic {
+  id               String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  fipsCode         String  @map("fips_code")
+  year             Int
+  marriageRate     Decimal? @map("marriage_rate") @db.Decimal(6, 2)
+  marriageCount    Int?     @map("marriage_count")
+  population       Int?
+  medianAge        Decimal? @map("median_age") @db.Decimal(4, 1)
+  medianIncome     Int?     @map("median_income")
+  populationGrowthPct Decimal? @map("population_growth_pct") @db.Decimal(5, 2)
+
+  @@unique([fipsCode, year])
+  @@map("macro_demographic")
+}
+
+model MacroSearchTrend {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  geo              String
+  weekStart        DateTime @map("week_start") @db.Date
+  term             String
+  relativeInterest Int      @map("relative_interest")
+
+  @@unique([geo, weekStart, term])
+  @@map("macro_search_trends")
+}
+
+model MacroCompetitorLandscape {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId           String   @map("venue_id") @db.Uuid
+  scannedAt         DateTime @map("scanned_at") @db.Timestamptz(6)
+  competitorName    String   @map("competitor_name")
+  competitorPlaceId String?  @map("competitor_place_id")
+  distanceMiles     Decimal? @map("distance_miles") @db.Decimal(5, 1)
+  googleRating      Decimal? @map("google_rating") @db.Decimal(2, 1)
+  reviewCount       Int?     @map("review_count")
+  rawData           Json?    @map("raw_data")
+
+  venue Venue @relation(fields: [venueId], references: [id])
+
+  @@map("macro_competitor_landscape")
+}
+
+// ============================================================
+// MATCHING QUEUE
+// ============================================================
+model MatchingQueue {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId   String   @map("venue_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  recordAType String  @map("record_a_type")
+  recordAId   String  @map("record_a_id") @db.Uuid
+  recordBType String  @map("record_b_type")
+  recordBId   String  @map("record_b_id") @db.Uuid
+
+  matchScore       Int    @map("match_score")
+  signalsMatched   Json?  @map("signals_matched")
+  signalsUnmatched Json?  @map("signals_unmatched")
+
+  status      String   @default("pending")
+  reviewedBy  String?  @map("reviewed_by") @db.Uuid
+  reviewedAt  DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  trainingLogged Boolean @default(false) @map("training_logged")
+
+  venue    Venue   @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  clientA  Client? @relation("MatchQueueRecordA", fields: [recordAId], references: [id])
+  clientB  Client? @relation("MatchQueueRecordB", fields: [recordBId], references: [id])
+
+  @@map("matching_queue")
+}
+
+// ============================================================
+// PATTERN BENCHMARKS
+// ============================================================
+model PatternBenchmark {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId       String?  @map("venue_id") @db.Uuid
+  calculatedAt  DateTime @default(now()) @map("calculated_at") @db.Timestamptz(6)
+  benchmarkType String   @map("benchmark_type")
+
+  // Segmentation
+  segmentVenueType String? @map("segment_venue_type")
+  segmentRegion    String? @map("segment_region")
+  segmentPriceTier String? @map("segment_price_tier")
+
+  // Values
+  p25        Decimal? @db.Decimal(10, 2)
+  p50        Decimal? @db.Decimal(10, 2)
+  p75        Decimal? @db.Decimal(10, 2)
+  mean       Decimal? @db.Decimal(10, 2)
+  sampleSize Int?     @map("sample_size")
+  confidenceLevel String? @map("confidence_level")
+
+  venue Venue? @relation(fields: [venueId], references: [id])
+
+  @@map("pattern_benchmarks")
+}
+
+// ============================================================
+// MARKET PULSE CACHE
+// ============================================================
+model MarketPulse {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId      String   @map("venue_id") @db.Uuid
+  calculatedAt DateTime @default(now()) @map("calculated_at") @db.Timestamptz(6)
+  validUntil   DateTime? @map("valid_until") @db.Timestamptz(6)
+
+  // Composite scores
+  demandOutlook String?  @map("demand_outlook")
+  demandScore   Int?     @map("demand_score")
+
+  // Component snapshots
+  consumerConfidenceLatest   Decimal? @map("consumer_confidence_latest") @db.Decimal(10, 4)
+  consumerConfidenceTrend    String?  @map("consumer_confidence_trend")
+  searchVolumeVsSeasonal     Int?     @map("search_volume_vs_seasonal")
+  engagementSeasonalitySignal String? @map("engagement_seasonality_signal")
+  marriageRateTrend          String?  @map("marriage_rate_trend")
+  regionalEconomySummary     String?  @map("regional_economy_summary")
+  weatherCautionMonths       String[] @map("weather_caution_months")
+  competitorChangeAlert      String?  @map("competitor_change_alert")
+
+  // Full output
+  fullSummary Json? @map("full_summary")
+
+  venue Venue @relation(fields: [venueId], references: [id])
+
+  @@map("market_pulse")
+}

@@ -1,0 +1,23 @@
+{
+  "name": "bloom",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "ingest:public-data": "ts-node packages/ingestion/scripts/ingest-all.ts"
+  },
+  "devDependencies": {
+    "turbo": "^1.13.x",
+    "typescript": "^5.3.x",
+    "@types/node": "^20.x"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
