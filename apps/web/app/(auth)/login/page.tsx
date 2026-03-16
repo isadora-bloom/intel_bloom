@@ -19,7 +19,7 @@ export default function LoginPage() {
     let data: any = {};
 
     try {
-      res = await fetch("/api/auth/login", {
+      res = await fetch("/api/signin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
