@@ -26,7 +26,7 @@ export default function UploadPage({ params }: { params: Promise<{ id: string }>
 
   const { data: upload, refetch } = trpc.uploads.getById.useQuery(
     { id: uploadId! },
-    { enabled: !!uploadId, refetchInterval: (data) => data?.status === "review" ? false : 3000 }
+    { enabled: !!uploadId, refetchInterval: (query) => (query.state.data as any)?.status === "review" ? false : 3000 }
   );
 
   const createUpload = trpc.uploads.create.useMutation();
