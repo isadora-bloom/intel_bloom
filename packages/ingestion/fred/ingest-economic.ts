@@ -29,7 +29,7 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function ingestFredSeries(seriesId: string, signalType: string) {
+export async function ingestFredSeries(seriesId: string, signalType: string) {
   const url =
     `${FRED_BASE}/series/observations` +
     `?series_id=${seriesId}&api_key=${FRED_KEY}&file_type=json` +
