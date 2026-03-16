@@ -28,7 +28,7 @@ ALTER TABLE market_pulse ENABLE ROW LEVEL SECURITY;
 -- ============================================================
 -- HELPER FUNCTION: get venue_id for authenticated user
 -- ============================================================
-CREATE OR REPLACE FUNCTION auth.venue_id_for_user()
+CREATE OR REPLACE FUNCTION public.venue_id_for_user()
 RETURNS UUID AS $$
   SELECT venue_id FROM venue_users
   WHERE user_id = auth.uid()
@@ -40,98 +40,98 @@ $$ LANGUAGE sql STABLE SECURITY DEFINER;
 -- ============================================================
 CREATE POLICY "venue_isolation" ON venues
   FOR ALL
-  USING (id = auth.venue_id_for_user());
+  USING (id = public.venue_id_for_user());
 
 -- ============================================================
 -- VENUE USERS: user can only see their own membership
 -- ============================================================
 CREATE POLICY "venue_isolation" ON venue_users
   FOR ALL
-  USING (venue_id = auth.venue_id_for_user());
+  USING (venue_id = public.venue_id_for_user());
 
 -- ============================================================
 -- CLIENTS
 -- ============================================================
 CREATE POLICY "venue_isolation" ON clients
   FOR ALL
-  USING (venue_id = auth.venue_id_for_user());
+  USING (venue_id = public.venue_id_for_user());
 
 -- ============================================================
 -- CLIENT SOURCE TOUCHPOINTS
 -- ============================================================
 CREATE POLICY "venue_isolation" ON client_source_touchpoints
   FOR ALL
-  USING (venue_id = auth.venue_id_for_user());
+  USING (venue_id = public.venue_id_for_user());
 
 -- ============================================================
 -- INQUIRIES
 -- ============================================================
 CREATE POLICY "venue_isolation" ON inquiries
   FOR ALL
-  USING (venue_id = auth.venue_id_for_user());
+  USING (venue_id = public.venue_id_for_user());
 
 -- ============================================================
 -- TOURS
 -- ============================================================
 CREATE POLICY "venue_isolation" ON tours
   FOR ALL
-  USING (venue_id = auth.venue_id_for_user());
+  USING (venue_id = public.venue_id_for_user());
 
 -- ============================================================
 -- UPLOADS
 -- ============================================================
 CREATE POLICY "venue_isolation" ON uploads
   FOR ALL
-  USING (venue_id = auth.venue_id_for_user());
+  USING (venue_id = public.venue_id_for_user());
 
 -- ============================================================
 -- PLANNING EVENTS
 -- ============================================================
 CREATE POLICY "venue_isolation" ON planning_events
   FOR ALL
-  USING (venue_id = auth.venue_id_for_user());
+  USING (venue_id = public.venue_id_for_user());
 
 -- ============================================================
 -- VENDORS
 -- ============================================================
 CREATE POLICY "venue_isolation" ON vendors
   FOR ALL
-  USING (venue_id = auth.venue_id_for_user());
+  USING (venue_id = public.venue_id_for_user());
 
 -- ============================================================
 -- CLIENT VENDORS
 -- ============================================================
 CREATE POLICY "venue_isolation" ON client_vendors
   FOR ALL
-  USING (venue_id = auth.venue_id_for_user());
+  USING (venue_id = public.venue_id_for_user());
 
 -- ============================================================
 -- ANNOTATIONS
 -- ============================================================
 CREATE POLICY "venue_isolation" ON annotations
   FOR ALL
-  USING (venue_id = auth.venue_id_for_user());
+  USING (venue_id = public.venue_id_for_user());
 
 -- ============================================================
 -- WEATHER FORECASTS
 -- ============================================================
 CREATE POLICY "venue_isolation" ON weather_forecasts
   FOR ALL
-  USING (venue_id = auth.venue_id_for_user());
+  USING (venue_id = public.venue_id_for_user());
 
 -- ============================================================
 -- COMPETITOR LANDSCAPE
 -- ============================================================
 CREATE POLICY "venue_isolation" ON macro_competitor_landscape
   FOR ALL
-  USING (venue_id = auth.venue_id_for_user());
+  USING (venue_id = public.venue_id_for_user());
 
 -- ============================================================
 -- MATCHING QUEUE
 -- ============================================================
 CREATE POLICY "venue_isolation" ON matching_queue
   FOR ALL
-  USING (venue_id = auth.venue_id_for_user());
+  USING (venue_id = public.venue_id_for_user());
 
 -- ============================================================
 -- PATTERN BENCHMARKS
@@ -139,14 +139,14 @@ CREATE POLICY "venue_isolation" ON matching_queue
 -- ============================================================
 CREATE POLICY "venue_isolation_benchmarks" ON pattern_benchmarks
   FOR ALL
-  USING (venue_id = auth.venue_id_for_user() OR venue_id IS NULL);
+  USING (venue_id = public.venue_id_for_user() OR venue_id IS NULL);
 
 -- ============================================================
 -- MARKET PULSE
 -- ============================================================
 CREATE POLICY "venue_isolation" ON market_pulse
   FOR ALL
-  USING (venue_id = auth.venue_id_for_user());
+  USING (venue_id = public.venue_id_for_user());
 
 -- ============================================================
 -- SERVICE ROLE BYPASS (for ingestion workers and cron jobs)
