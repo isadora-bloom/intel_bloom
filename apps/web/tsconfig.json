@@ -22,7 +22,13 @@
       "@/*": ["./*"],
       "~/": ["./"],
       "@bloom/db": ["../../packages/db/src"],
-      "@bloom/ingestion": ["../../packages/ingestion/src"]
+      "@bloom/ingestion": ["../../packages/ingestion/src"],
+      "@bloom/extraction": ["../../packages/extraction"],
+      "@bloom/extraction/*": ["../../packages/extraction/*"],
+      "@bloom/pulse": ["../../packages/pulse"],
+      "@bloom/pulse/*": ["../../packages/pulse/*"],
+      "@bloom/matching": ["../../packages/matching"],
+      "@bloom/matching/*": ["../../packages/matching/*"]
     }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
