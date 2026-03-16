@@ -15,16 +15,24 @@ export default function LoginPage() {
     setLoading(true);
     setError(null);
 
-    const res = await fetch("/api/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    });
+    let res: Response;
+    let data: any = {};
 
-    const data = await res.json();
+    try {
+      res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      data = await res.json().catch(() => ({}));
+    } catch {
+      setError("Network error — please try again");
+      setLoading(false);
+      return;
+    }
 
     if (!res.ok) {
-      setError(data.error ?? "Sign in failed");
+      setError(data.error ?? `Sign in failed (${res.status})`);
       setLoading(false);
     } else {
       window.location.href = "/dashboard";
