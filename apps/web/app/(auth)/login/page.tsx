@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { signIn } from "./actions";
+import { createClient } from "@/lib/supabase/client";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -14,13 +14,15 @@ export default function LoginPage() {
     setLoading(true);
     setError(null);
 
-    const result = await signIn(email, password);
+    const supabase = createClient();
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
 
-    if (result?.error) {
-      setError(result.error);
+    if (error) {
+      setError(error.message);
       setLoading(false);
+    } else {
+      window.location.href = "/dashboard";
     }
-    // on success, server action calls redirect("/dashboard") — no client-side nav needed
   }
 
   return (
