@@ -1,42 +1,26 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { signIn } from "./actions";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const router = useRouter();
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     setError(null);
 
-    let res: Response;
-    let data: any = {};
+    const result = await signIn(email, password);
 
-    try {
-      res = await fetch("/api/signin", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-      });
-      data = await res.json().catch(() => ({}));
-    } catch {
-      setError("Network error — please try again");
+    if (result?.error) {
+      setError(result.error);
       setLoading(false);
-      return;
     }
-
-    if (!res.ok) {
-      setError(data.error ?? `Sign in failed (${res.status})`);
-      setLoading(false);
-    } else {
-      window.location.href = "/dashboard";
-    }
+    // on success, server action calls redirect("/dashboard") — no client-side nav needed
   }
 
   return (
