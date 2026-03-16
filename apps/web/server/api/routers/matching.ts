@@ -118,7 +118,7 @@ export const matchingRouter = router({
 });
 
 async function fetchRecord(
-  supabase: ReturnType<typeof import("@supabase/supabase-js").createClient>,
+  supabase: any,
   type: string,
   id: string,
   venueId: string
