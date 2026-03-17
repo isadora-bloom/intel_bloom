@@ -66,9 +66,9 @@ export const insightsRouter = router({
             .from("weather_monthly")
             .select("month, year, precipitation_inches, weather_score, temp_avg_f")
             .eq("noaa_station_id", venue.noaa_station_id)
+            .eq("month", new Date().getMonth() + 1)  // current calendar month only
             .order("year", { ascending: false })
-            .order("month", { ascending: false })
-            .limit(4)
+            .limit(8)  // up to 8 years of this month
         : Promise.resolve({ data: null }),
 
       venue?.noaa_station_id
@@ -232,60 +232,95 @@ export const insightsRouter = router({
 
     // ── INSIGHT 2: WEATHER EXPLAINER ─────────────────────────────────────────
     if (recentWeather && recentWeather.length > 0 && recentInquiries !== null) {
-      const latestWeather = recentWeather[0];
-      const recentCount = recentInquiries.length;
-      // 30-day average from the prior 60 days
-      const avgPrev = prevInquiries ? prevInquiries.length / 2 : null; // per-30-day rate
+      const currentYear = new Date().getFullYear();
+      const currentMonth = new Date().getMonth() + 1;
 
-      const precipScore = latestWeather.weather_score ?? 0;
-      const precipIn = latestWeather.precipitation_inches ?? 0;
-      const monthName = MONTH_NAMES[(latestWeather.month as number) - 1];
+      // Prefer current year's data; fall back to historical average for this month
+      const thisYearRow = recentWeather.find((r) => r.year === currentYear);
+      const historicalRows = recentWeather.filter(
+        (r) => r.year !== currentYear && r.weather_score !== null
+      );
+
+      let precipScore: number | null = null;
+      let precipIn: number | null = null;
+      let isHistoricalFallback = false;
+
+      if (thisYearRow && thisYearRow.weather_score !== null) {
+        // Current year data available
+        precipScore = thisYearRow.weather_score as number;
+        precipIn = thisYearRow.precipitation_inches as number | null;
+      } else if (historicalRows.length > 0) {
+        // Fall back to historical average for this month
+        precipScore = Math.round(
+          avg(historicalRows.map((r) => r.weather_score as number)) * 10
+        ) / 10;
+        precipIn = null;
+        isHistoricalFallback = true;
+      }
+
+      const recentCount = recentInquiries.length;
+      const avgPrev = prevInquiries ? prevInquiries.length / 2 : null;
+      const monthName = MONTH_NAMES[currentMonth - 1];
 
       let headline = "";
       let body = "";
       let sentiment: BriefingInsight["sentiment"] = "neutral";
       const supporting: { label: string; value: string }[] = [];
 
-      if (precipScore >= 5) {
-        // High weather difficulty
-        headline = `${monthName} weather difficulty is elevated — this suppresses inquiries`;
-        body = `Your NOAA station recorded ${precipIn?.toFixed(1)}" of precipitation this month (difficulty score ${precipScore}/10). `;
+      if (precipScore === null) {
+        // No data at all for this month
+        headline = `${monthName} weather data not yet available`;
+        body = `NOAA data for ${monthName} ${currentYear} hasn't been ingested yet. Check back once the monthly ingestion has run.`;
+        sentiment = "neutral";
+      } else if (precipScore >= 5) {
+        const dataLabel = isHistoricalFallback
+          ? `${monthName} historically averages a difficulty score of ${precipScore}/10 (${historicalRows.length}-year average)`
+          : `${monthName} difficulty score is ${precipScore}/10 at your NOAA station`;
+        headline = `${monthName} weather is difficult — expect inquiry suppression`;
+        body = `${dataLabel}. `;
+        if (!isHistoricalFallback && precipIn !== null) {
+          body += `${precipIn.toFixed(1)}" of precipitation recorded. `;
+        }
         if (avgPrev !== null && recentCount < avgPrev * 0.8) {
           const drop = Math.abs(Math.round(pctChange(recentCount, avgPrev)));
-          body += `Inquiries are down ${drop}% vs your recent average — consistent with weather suppression. Expect volume to recover when conditions improve.`;
+          body += `Inquiries are down ${drop}% vs your recent average — consistent with weather suppression. Expect a rebound when conditions improve.`;
+          sentiment = "caution";
+        } else if (isHistoricalFallback) {
+          body += `This month typically sees reduced inquiry volume due to weather. If your numbers are down, this is likely why.`;
           sentiment = "caution";
         } else {
           body += `Inquiries have held relatively steady despite conditions.`;
           sentiment = "neutral";
         }
-        supporting.push({ label: "Precip this month", value: `${precipIn?.toFixed(1)}"` });
         supporting.push({ label: "Difficulty score", value: `${precipScore}/10` });
+        if (!isHistoricalFallback && precipIn !== null) supporting.push({ label: "Precip", value: `${precipIn.toFixed(1)}"` });
+        if (isHistoricalFallback) supporting.push({ label: "Data", value: `${historicalRows.length}-yr avg` });
         if (avgPrev !== null) {
-          supporting.push({ label: "Recent inquiries", value: String(recentCount) });
-          supporting.push({
-            label: "30-day avg",
-            value: Math.round(avgPrev).toString(),
-          });
+          supporting.push({ label: "Inquiries (30d)", value: String(recentCount) });
+          supporting.push({ label: "Prior avg", value: Math.round(avgPrev).toString() });
         }
       } else if (precipScore <= 2) {
-        // Good weather
-        headline = `${monthName} weather is favourable — good conditions for inquiry volume`;
-        body = `Your NOAA station shows low weather difficulty (${precipScore}/10) this month. `;
+        const dataLabel = isHistoricalFallback
+          ? `${monthName} historically has low weather difficulty (${precipScore}/10 average)`
+          : `${monthName} difficulty score is ${precipScore}/10`;
+        headline = `${monthName} weather is favourable — no suppression expected`;
+        body = `${dataLabel}. `;
         if (avgPrev !== null && recentCount >= avgPrev) {
           body += `Inquiries are tracking at or above your recent average — no weather headwinds.`;
           sentiment = "positive";
         } else {
-          body += `If inquiries are softer than expected, weather isn't the cause.`;
+          body += `If inquiries are softer than expected, weather isn't the cause — look at macro signals or campaign activity.`;
           sentiment = "neutral";
         }
         supporting.push({ label: "Difficulty score", value: `${precipScore}/10` });
+        if (isHistoricalFallback) supporting.push({ label: "Data", value: `${historicalRows.length}-yr avg` });
         if (avgPrev !== null) supporting.push({ label: "Inquiries (30d)", value: String(recentCount) });
       } else {
-        // Moderate
-        headline = `${monthName} weather is typical — no unusual suppression`;
-        body = `Weather difficulty is ${precipScore}/10 at your NOAA station this month. No significant weather event is suppressing your inquiry volume.`;
+        headline = `${monthName} weather is moderate — minor impact on inquiry volume`;
+        body = `Difficulty score is ${precipScore}/10${isHistoricalFallback ? ` (${historicalRows.length}-year ${monthName} average)` : ""}. Some weather effect is possible but not significant enough to fully explain volume changes.`;
         sentiment = "neutral";
         supporting.push({ label: "Difficulty score", value: `${precipScore}/10` });
+        if (avgPrev !== null) supporting.push({ label: "Inquiries (30d)", value: String(recentCount) });
       }
 
       insights.push({
@@ -295,7 +330,7 @@ export const insightsRouter = router({
         body,
         supporting,
         sentiment,
-        dataAvailable: true,
+        dataAvailable: precipScore !== null,
       });
     } else {
       insights.push({
