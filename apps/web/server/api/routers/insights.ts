@@ -602,6 +602,8 @@ export const insightsRouter = router({
         { data: macroData },
         { data: pulse },
         { data: sourceSummary },
+        { data: platformMetrics },
+        { data: sourceSpend },
       ] = await Promise.all([
         ctx.supabase
           .from("clients")
@@ -652,6 +654,20 @@ export const insightsRouter = router({
           .select("resolved_source, status, revenue_cents")
           .eq("venue_id", ctx.venueId)
           .not("resolved_source", "is", null),
+
+        // Platform performance metrics captured from screenshots
+        ctx.supabase
+          .from("platform_metrics")
+          .select("platform, metric_name, metric_value, period_label, period_start, period_end, breakdown, comparison, captured_at")
+          .eq("venue_id", ctx.venueId)
+          .order("captured_at", { ascending: false })
+          .limit(50),
+
+        // What the venue pays per platform
+        ctx.supabase
+          .from("source_spend")
+          .select("platform, annual_spend_cents, contract_start, contract_end, contract_label")
+          .eq("venue_id", ctx.venueId),
       ]);
 
       // Build compact context object
@@ -689,6 +705,19 @@ export const insightsRouter = router({
         if (c.revenue_cents) sourceBreakdown[s].revenue.push(c.revenue_cents);
       }
 
+      // Cost-per-booking calculations per platform
+      const costPerBooking: Record<string, { spend_usd: number; bookings: number; cost_per_booking_usd: number | null }> = {};
+      for (const spend of sourceSpend ?? []) {
+        const p = spend.platform as string;
+        const spendUsd = spend.annual_spend_cents ? spend.annual_spend_cents / 100 : 0;
+        const bookings = sourceBreakdown[p]?.count ?? 0;
+        costPerBooking[p] = {
+          spend_usd: spendUsd,
+          bookings,
+          cost_per_booking_usd: bookings > 0 ? Math.round(spendUsd / bookings) : null,
+        };
+      }
+
       const context = {
         venue: {
           name: venue?.name,
@@ -716,6 +745,21 @@ export const insightsRouter = router({
           source,
           bookings: s.count,
           avg_revenue_usd: s.revenue.length ? Math.round(avg(s.revenue) / 100) : null,
+        })),
+        platform_spend: Object.entries(costPerBooking).map(([platform, d]) => ({
+          platform,
+          annual_spend_usd: d.spend_usd,
+          bookings_attributed: d.bookings,
+          cost_per_booking_usd: d.cost_per_booking_usd,
+        })),
+        platform_metrics: (platformMetrics ?? []).map((m) => ({
+          platform: m.platform,
+          metric: m.metric_name,
+          value: m.metric_value,
+          period: m.period_label,
+          vs_prior: m.comparison,
+          // Include breakdown only if it has data (keeps context compact)
+          breakdown: m.breakdown ? (m.breakdown as any[]).slice(0, 24) : undefined,
         })),
         weather_recent:
           weatherData?.slice(0, 3).map((w) => ({

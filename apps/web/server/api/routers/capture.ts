@@ -21,6 +21,7 @@ export type CaptureFileType =
   | "ads_dashboard"
   | "google_analytics"
   | "social_insights"
+  | "platform_billing"
   | "unknown";
 
 export interface ExtractedField {
@@ -31,7 +32,7 @@ export interface ExtractedField {
 
 export interface CaptureRow {
   id: string; // temp local id
-  type: "client" | "inquiry" | "vendor" | "review" | "metric" | "unknown";
+  type: "client" | "inquiry" | "vendor" | "review" | "metric" | "spend" | "unknown";
   fields: ExtractedField[];
   mapped: Record<string, string | null>; // field -> value, ready to write
   anomalies: CaptureAnomaly[];
@@ -131,25 +132,29 @@ async function classifyImage(base64: string, mimeType: string): Promise<Classify
           },
           {
             type: "text",
-            text: `You are extracting data from a wedding venue business screenshot. You can read both tabular data AND visual charts (bar charts, line graphs, pie charts, tables with numbers).
+            text: `You are extracting data from a wedding venue business screenshot. You can read tabular data, visual charts (bar charts, line graphs), and billing/contract documents.
 
-First, identify what type of screenshot this is:
-- Inquiry screenshots (The Knot, WeddingWire, Instagram DMs, email) → extract contact/inquiry rows
-- Review screenshots (Google, The Knot, WeddingWire) → extract review rows
-- Analytics/chart screenshots (Google Analytics, Google Ads, The Knot stats, Meta Insights, ad performance dashboards, booking reports) → extract metric rows by reading values from charts/tables
-- Financial/booking spreadsheets → extract client/financial rows
+Identify the screenshot type:
+- Inquiry screenshots (The Knot, WeddingWire, Instagram DMs, email) → inquiry rows
+- Review screenshots (Google, The Knot, WeddingWire) → review rows
+- Platform analytics/insights dashboards (The Knot/WeddingWire insights, impressions, saves, visitors, leads, link clicks, calls pages) → metric rows
+- Ad performance dashboards (Google Ads, Meta Ads) → metric rows
+- Billing/contract/invoice screenshots (showing what the venue PAYS for a listing or ad product) → spend rows
+- Financial/booking spreadsheets → client rows
 
-For CHART/ANALYTICS screenshots: Read the axes, legend, labels, and data points carefully. Estimate bar heights, read line graph values at each point, extract all visible numbers from tables. Each distinct metric or data series becomes a separate "metric" row.
+For CHART screenshots: Read axes, legend, labels, and data points carefully. Estimate values from bar heights or line positions. Read every labeled data point. Each KPI = separate metric row. Monthly time-series = one metric row with metric_breakdown array.
+
+For BILLING/CONTRACT screenshots: Extract what the venue is paying, to whom, for what product, for what date range.
 
 Respond with ONLY valid JSON:
 {
-  "fileType": "knot_inquiry_screenshot" | "instagram_inquiry_screenshot" | "email_inquiry_screenshot" | "review_screenshot" | "analytics_chart" | "ads_dashboard" | "google_analytics" | "social_insights" | "unknown",
-  "fileTypeLabel": "human-readable label e.g. 'Google Ads Performance' or 'The Knot Inquiry'",
+  "fileType": "knot_inquiry_screenshot" | "instagram_inquiry_screenshot" | "email_inquiry_screenshot" | "review_screenshot" | "analytics_chart" | "ads_dashboard" | "google_analytics" | "social_insights" | "platform_billing" | "unknown",
+  "fileTypeLabel": "human-readable label e.g. 'The Knot Billing Contract' or 'WeddingPro Impressions Chart'",
   "confidence": "high" | "medium" | "low",
-  "summary": "One sentence — e.g. 'Google Ads dashboard showing 847 clicks and $12.40 CPC for March 2025'",
+  "summary": "One sentence — e.g. 'WeddingPro billing showing $15,132.60/year for Featured listing, Oct 2025–Oct 2026' or 'WeddingPro saves chart: 587 saves in 12 months, Apr 2025–Mar 2026'",
   "rows": [
     {
-      "type": "inquiry" | "client" | "review" | "metric" | "unknown",
+      "type": "inquiry" | "client" | "review" | "metric" | "spend" | "unknown",
       "fields": [
         // For inquiry/client rows:
         { "field": "name_primary", "value": "...", "confidence": "high" },
@@ -157,7 +162,6 @@ Respond with ONLY valid JSON:
         { "field": "phone_primary", "value": "...", "confidence": "medium" },
         { "field": "event_date", "value": "YYYY-MM-DD or raw text", "confidence": "high" },
         { "field": "guest_count_initial", "value": "...", "confidence": "medium" },
-        { "field": "self_reported_source", "value": "...", "confidence": "high" },
         { "field": "raw_message", "value": "full message text", "confidence": "high" },
         { "field": "first_touch_platform", "value": "the_knot|wedding_wire|instagram|google_ads|google_organic|referral|direct|other", "confidence": "high" },
 
@@ -167,21 +171,33 @@ Respond with ONLY valid JSON:
         { "field": "review_platform", "value": "google|the_knot|wedding_wire|other", "confidence": "high" },
         { "field": "name_primary", "value": "reviewer name if visible", "confidence": "medium" },
 
-        // For metric rows (charts, analytics, ads):
-        { "field": "metric_name", "value": "e.g. Clicks, Impressions, Cost Per Click, Inquiries, Bookings, CTR, ROAS, Reach, Leads", "confidence": "high" },
-        { "field": "metric_value", "value": "the numeric value, e.g. 847 or 12.40 or 3.2%", "confidence": "high" },
-        { "field": "metric_period", "value": "e.g. March 2025, Q1 2025, last 30 days, 2024", "confidence": "medium" },
-        { "field": "metric_platform", "value": "e.g. Google Ads, Meta, The Knot, WeddingWire, Instagram, Overall", "confidence": "high" },
-        { "field": "metric_comparison", "value": "change vs prior period if visible, e.g. +12% vs last month", "confidence": "medium" },
-        { "field": "metric_breakdown", "value": "if it's a breakdown chart, list all segments as JSON array string e.g. [{label:Mon,value:45},{label:Tue,value:52}]", "confidence": "medium" }
+        // For metric rows (charts, analytics dashboards):
+        { "field": "metric_name", "value": "impressions|saves|visitors|leads|link_clicks|calls|clicks|cpc|ctr|roas|reviews|inquiries|bookings", "confidence": "high" },
+        { "field": "metric_value", "value": "total numeric value visible e.g. 37300 or 587 or 4364", "confidence": "high" },
+        { "field": "metric_period", "value": "e.g. last 12 months, March 2025, Apr 2025–Mar 2026", "confidence": "medium" },
+        { "field": "metric_platform", "value": "the_knot|wedding_wire|google_ads|meta|instagram|overall", "confidence": "high" },
+        { "field": "metric_comparison", "value": "change vs prior period if visible, e.g. -2% vs last 30 days", "confidence": "medium" },
+        { "field": "metric_breakdown", "value": "JSON array of monthly points e.g. [{\"label\":\"Apr\",\"value\":3000},{\"label\":\"May\",\"value\":3000}]", "confidence": "medium" },
+
+        // For spend rows (billing/contract screenshots):
+        { "field": "spend_platform", "value": "the_knot|wedding_wire|google_ads|meta|instagram|other", "confidence": "high" },
+        { "field": "spend_amount", "value": "total contract value in dollars e.g. 15132.60", "confidence": "high" },
+        { "field": "spend_period", "value": "annual|monthly|quarterly", "confidence": "high" },
+        { "field": "spend_contract_start", "value": "YYYY-MM-DD", "confidence": "high" },
+        { "field": "spend_contract_end", "value": "YYYY-MM-DD", "confidence": "high" },
+        { "field": "spend_product_name", "value": "e.g. The Knot Featured All Venue DC/MD/VA Region", "confidence": "high" }
       ]
     }
   ]
 }
 
-IMPORTANT for charts: If a chart shows multiple data points (e.g. clicks by month for 6 months), create ONE metric row with metric_breakdown containing all points. If a dashboard shows multiple distinct KPIs (clicks, cost, CTR, conversions), create a SEPARATE metric row for each KPI. Read values as precisely as you can from the visual.
+IMPORTANT:
+- For charts showing monthly data: create ONE metric row per KPI, with metric_breakdown containing all data points as a JSON array
+- If a dashboard shows multiple KPIs (e.g. impressions page shows total + monthly breakdown), create one row for the total and include the monthly breakdown in metric_breakdown
+- For billing: one spend row per contract/product line
+- Read chart values as precisely as possible from the visual — use axis gridlines to estimate
 
-Only include fields you can actually see. Extract every visible person/inquiry/review/metric.`,
+Only include fields you can actually see.`,
           },
         ],
       },
@@ -490,7 +506,7 @@ export const captureRouter = router({
         rows: z.array(
           z.object({
             id: z.string(),
-            type: z.enum(["client", "inquiry", "vendor", "review", "metric", "unknown"]),
+            type: z.enum(["client", "inquiry", "vendor", "review", "metric", "spend", "unknown"]),
             skip: z.boolean().default(false),
             mapped: z.record(z.string().nullable()),
             anomalyAnswers: z.record(z.string()), // anomaly.id -> answer
@@ -599,44 +615,88 @@ export const captureRouter = router({
               results.inserted++;
             }
           } else if (row.type === "metric") {
-            // Store analytics/chart metrics as annotations
+            // Store into platform_metrics table
             const period = row.mapped.metric_period ?? null;
-            // Try to parse a date from the period string; default to current month
             const now = new Date();
-            let periodStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split("T")[0];
-            let periodEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split("T")[0];
+
+            // Attempt to parse period into a date range
+            let periodStart: string | null = null;
+            let periodEnd: string | null = null;
+
             if (period) {
-              const parsed = new Date(period);
-              if (!isNaN(parsed.getTime())) {
-                periodStart = new Date(parsed.getFullYear(), parsed.getMonth(), 1).toISOString().split("T")[0];
-                periodEnd = new Date(parsed.getFullYear(), parsed.getMonth() + 1, 0).toISOString().split("T")[0];
+              // Try "Apr 2025-Mar 2026" style
+              const rangeMatch = period.match(/(\w+\s+\d{4})\s*[-–]\s*(\w+\s+\d{4})/);
+              if (rangeMatch) {
+                const s = new Date(rangeMatch[1]);
+                const e = new Date(rangeMatch[2]);
+                if (!isNaN(s.getTime())) periodStart = new Date(s.getFullYear(), s.getMonth(), 1).toISOString().split("T")[0];
+                if (!isNaN(e.getTime())) periodEnd = new Date(e.getFullYear(), e.getMonth() + 1, 0).toISOString().split("T")[0];
+              } else if (period.toLowerCase().includes("last 12 months")) {
+                periodEnd = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split("T")[0];
+                periodStart = new Date(now.getFullYear() - 1, now.getMonth(), 1).toISOString().split("T")[0];
+              } else {
+                const parsed = new Date(period);
+                if (!isNaN(parsed.getTime())) {
+                  periodStart = new Date(parsed.getFullYear(), parsed.getMonth(), 1).toISOString().split("T")[0];
+                  periodEnd = new Date(parsed.getFullYear(), parsed.getMonth() + 1, 0).toISOString().split("T")[0];
+                }
               }
             }
+
             const metricVal = row.mapped.metric_value
-              ? parseFloat(row.mapped.metric_value.replace(/[^0-9.-]/g, ""))
+              ? parseFloat(row.mapped.metric_value.replace(/[^0-9.]/g, ""))
               : null;
-            const notes = JSON.stringify({
-              metric_name: row.mapped.metric_name,
-              metric_value: row.mapped.metric_value,
-              metric_period: period,
-              metric_comparison: row.mapped.metric_comparison,
-              metric_breakdown: row.mapped.metric_breakdown,
-            });
-            const { error } = await ctx.supabase.from("annotations").insert({
+
+            let breakdown: any = null;
+            if (row.mapped.metric_breakdown) {
+              try { breakdown = JSON.parse(row.mapped.metric_breakdown); } catch {}
+            }
+
+            const { error } = await ctx.supabase.from("platform_metrics").insert({
               venue_id: ctx.venueId,
+              platform: (row.mapped.metric_platform ?? "unknown").toLowerCase().replace(/\s+/g, "_"),
+              metric_name: (row.mapped.metric_name ?? "unknown").toLowerCase().replace(/\s+/g, "_"),
+              metric_value: !isNaN(metricVal!) ? metricVal : null,
               period_start: periodStart,
               period_end: periodEnd,
-              annotation_type: "captured_metric",
-              category_detail: row.mapped.metric_platform ?? "unknown",
-              notes,
+              period_label: period,
+              breakdown: breakdown,
+              comparison: row.mapped.metric_comparison ?? null,
               source: "capture_upload",
-              detected_signal: row.mapped.metric_name ?? null,
-              detected_value: !isNaN(metricVal!) ? metricVal : null,
-              exclude_from_patterns: false,
-              propagate_to_aggregate: false,
             });
+
             if (error) {
-              results.errors.push(`Metric (${row.mapped.metric_name}): ${error.message}`);
+              // If it's a duplicate, that's fine — already have this data
+              if (error.code === "23505") {
+                results.skipped++;
+              } else {
+                results.errors.push(`Metric (${row.mapped.metric_name}): ${error.message}`);
+              }
+            } else {
+              results.inserted++;
+            }
+          } else if (row.type === "spend") {
+            // Store into source_spend table
+            const amount = row.mapped.spend_amount
+              ? Math.round(parseFloat(row.mapped.spend_amount.replace(/[^0-9.]/g, "")) * 100)
+              : null;
+
+            const { error } = await ctx.supabase.from("source_spend").insert({
+              venue_id: ctx.venueId,
+              platform: (row.mapped.spend_platform ?? "unknown").toLowerCase().replace(/\s+/g, "_"),
+              annual_spend_cents: amount,
+              contract_start: row.mapped.spend_contract_start ?? null,
+              contract_end: row.mapped.spend_contract_end ?? null,
+              contract_label: row.mapped.spend_product_name ?? null,
+              source: "capture_upload",
+            });
+
+            if (error) {
+              if (error.code === "23505") {
+                results.skipped++;
+              } else {
+                results.errors.push(`Spend (${row.mapped.spend_platform}): ${error.message}`);
+              }
             } else {
               results.inserted++;
             }
