@@ -243,10 +243,223 @@ Only include fields you can actually see.`,
 
 // ── CLASSIFY CSV ──────────────────────────────────────────────────────────────
 
+// ── KNOT ACTIVITY LOG PARSER ──────────────────────────────────────────────────
+// Handles the WeddingPro activity log export format:
+//   "Mar 16, 2026"
+//   C
+//   Chelsey R. visited your Storefront on The Knot.
+//   E
+//   Esmeralda C. sent an inquiry to your Storefront on The Knot.
+
+function isKnotActivityLog(content: string): boolean {
+  // Detect by looking for the alternating letter/sentence pattern + date headers
+  const lines = content.split("\n").slice(0, 30).map((l) => l.trim()).filter(Boolean);
+  const hasDateHeader = lines.some((l) => /^"?\w+ \d+, \d{4}"?$/.test(l));
+  const hasSentence = lines.some((l) => /your Storefront on (The Knot|WeddingWire)/i.test(l));
+  return hasDateHeader && hasSentence;
+}
+
+function parseKnotActivityLog(content: string): ClassifyResult {
+  const lines = content.split("\n").map((l) => l.trim().replace(/^"|"$/g, "")).filter(Boolean);
+
+  const rows: CaptureRow[] = [];
+  // Daily aggregate counters for metric rows
+  const dailyStats: Record<string, { visits: number; saves: number; inquiries: number; linkClicks: number }> = {};
+
+  let currentDate: string | null = null;
+
+  // Month name → number
+  const MONTHS: Record<string, number> = {
+    Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5,
+    Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11,
+  };
+
+  function parseActivityDate(raw: string): string | null {
+    // "Mar 16, 2026" → "2026-03-16"
+    const m = raw.match(/^(\w+)\s+(\d+),\s+(\d{4})$/);
+    if (!m) return null;
+    const month = MONTHS[m[1]];
+    if (month === undefined) return null;
+    return `${m[3]}-${String(month + 1).padStart(2, "0")}-${String(parseInt(m[2])).padStart(2, "0")}`;
+  }
+
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // Date header
+    const dateIso = parseActivityDate(line);
+    if (dateIso) {
+      currentDate = dateIso;
+      if (!dailyStats[currentDate]) {
+        dailyStats[currentDate] = { visits: 0, saves: 0, inquiries: 0, linkClicks: 0 };
+      }
+      i++;
+      continue;
+    }
+
+    // Aggregate lines: "3 other couples visited..."
+    const aggMatch = line.match(/^(\d+)\s+other\s+couple[s]?\s+(visited|saved)/i);
+    if (aggMatch && currentDate) {
+      const count = parseInt(aggMatch[1]);
+      const action = aggMatch[2].toLowerCase();
+      if (!dailyStats[currentDate]) dailyStats[currentDate] = { visits: 0, saves: 0, inquiries: 0, linkClicks: 0 };
+      if (action === "visited") dailyStats[currentDate].visits += count;
+      if (action === "saved") dailyStats[currentDate].saves += count;
+      i++;
+      continue;
+    }
+
+    // Anonymous couple actions: "A couple visited..." / "A couple saved..."
+    const anonMatch = line.match(/^A couple (visited|saved|sent an inquiry)/i);
+    if (anonMatch && currentDate) {
+      const action = anonMatch[1].toLowerCase();
+      if (!dailyStats[currentDate]) dailyStats[currentDate] = { visits: 0, saves: 0, inquiries: 0, linkClicks: 0 };
+      if (action === "visited") dailyStats[currentDate].visits += 1;
+      else if (action === "saved") dailyStats[currentDate].saves += 1;
+      else dailyStats[currentDate].inquiries += 1;
+      i++;
+      continue;
+    }
+
+    // Named activity lines: "Chelsey R. visited your Storefront on The Knot."
+    const namedMatch = line.match(/^([A-Z][a-zA-Z'-]+(?:\s+[A-Z][a-zA-Z'-]*\.?)?)\.\s+(visited|saved|sent an inquiry|visited your website)/i);
+
+    // The letter-initial lines before named events — skip single-letter lines
+    if (/^[A-Z]$/.test(line)) { i++; continue; }
+
+    if (namedMatch && currentDate) {
+      const personName = namedMatch[1].trim();
+      const action = namedMatch[2].toLowerCase();
+
+      if (!dailyStats[currentDate]) dailyStats[currentDate] = { visits: 0, saves: 0, inquiries: 0, linkClicks: 0 };
+
+      if (action.includes("inquiry")) {
+        dailyStats[currentDate].inquiries += 1;
+        rows.push({
+          id: makeId(),
+          type: "inquiry",
+          fields: [
+            { field: "name_primary", value: personName, confidence: "high" },
+            { field: "first_touch_platform", value: "the_knot", confidence: "high" },
+            { field: "received_at", value: currentDate, confidence: "high" },
+          ],
+          mapped: {
+            name_primary: personName,
+            first_touch_platform: "the_knot",
+            received_at: currentDate,
+            raw_message: line,
+          },
+          anomalies: [],
+        });
+      } else if (action === "saved") {
+        dailyStats[currentDate].saves += 1;
+        // Named saves are warm leads — store as inquiry with save context
+        rows.push({
+          id: makeId(),
+          type: "inquiry",
+          fields: [
+            { field: "name_primary", value: personName, confidence: "high" },
+            { field: "first_touch_platform", value: "the_knot", confidence: "high" },
+            { field: "received_at", value: currentDate, confidence: "high" },
+          ],
+          mapped: {
+            name_primary: personName,
+            first_touch_platform: "the_knot",
+            received_at: currentDate,
+            raw_message: `${personName} saved your Storefront on The Knot on ${currentDate} (no inquiry yet)`,
+            self_reported_source: "the_knot_save",
+          },
+          anomalies: [],
+        });
+      } else if (action === "visited") {
+        dailyStats[currentDate].visits += 1;
+      } else if (action.includes("website")) {
+        dailyStats[currentDate].linkClicks += 1;
+      }
+      i++;
+      continue;
+    }
+
+    i++;
+  }
+
+  // Build metric rows from daily aggregates — one per metric type
+  const allDates = Object.keys(dailyStats).sort();
+  const totalVisits = Object.values(dailyStats).reduce((s, d) => s + d.visits, 0);
+  const totalSaves = Object.values(dailyStats).reduce((s, d) => s + d.saves, 0);
+  const totalInquiries = Object.values(dailyStats).reduce((s, d) => s + d.inquiries, 0);
+  const periodStart = allDates[0] ?? null;
+  const periodEnd = allDates[allDates.length - 1] ?? null;
+  const periodLabel = periodStart && periodEnd ? `${periodStart} to ${periodEnd}` : null;
+
+  const breakdown = allDates.map((date) => ({
+    label: date,
+    visits: dailyStats[date].visits,
+    saves: dailyStats[date].saves,
+    inquiries: dailyStats[date].inquiries,
+  }));
+
+  if (totalVisits > 0) {
+    rows.push({
+      id: makeId(), type: "metric",
+      fields: [{ field: "metric_name", value: "visitors", confidence: "high" }],
+      mapped: {
+        metric_name: "visitors", metric_platform: "the_knot",
+        metric_value: String(totalVisits), metric_period: periodLabel,
+        metric_breakdown: JSON.stringify(allDates.map((d) => ({ label: d, value: dailyStats[d].visits }))),
+      },
+      anomalies: [],
+    });
+  }
+  if (totalSaves > 0) {
+    rows.push({
+      id: makeId(), type: "metric",
+      fields: [{ field: "metric_name", value: "saves", confidence: "high" }],
+      mapped: {
+        metric_name: "saves", metric_platform: "the_knot",
+        metric_value: String(totalSaves), metric_period: periodLabel,
+        metric_breakdown: JSON.stringify(allDates.map((d) => ({ label: d, value: dailyStats[d].saves }))),
+      },
+      anomalies: [],
+    });
+  }
+  if (totalInquiries > 0) {
+    rows.push({
+      id: makeId(), type: "metric",
+      fields: [{ field: "metric_name", value: "inquiries", confidence: "high" }],
+      mapped: {
+        metric_name: "inquiries", metric_platform: "the_knot",
+        metric_value: String(totalInquiries), metric_period: periodLabel,
+        metric_breakdown: JSON.stringify(allDates.map((d) => ({ label: d, value: dailyStats[d].inquiries }))),
+      },
+      anomalies: [],
+    });
+  }
+
+  const inquiryRows = rows.filter((r) => r.type === "inquiry" && r.mapped.raw_message?.includes("sent an inquiry"));
+  const saveRows = rows.filter((r) => r.type === "inquiry" && r.mapped.self_reported_source === "the_knot_save");
+
+  return {
+    fileType: "knot_activity_log" as any,
+    fileTypeLabel: "The Knot Activity Log",
+    confidence: "high",
+    rows,
+    summary: `The Knot activity log from ${periodStart ?? "?"} to ${periodEnd ?? "?"}. ${inquiryRows.length} named inquiries, ${saveRows.length} named saves, ${totalVisits} total visits across ${allDates.length} days.`,
+    totalAnomalies: 0,
+    blockers: 0,
+  };
+}
+
 async function classifyCSV(
   content: string,
   fileName: string
 ): Promise<ClassifyResult> {
+  // Detect and handle Knot activity log format before sending to Claude
+  if (isKnotActivityLog(content)) {
+    return parseKnotActivityLog(content);
+  }
+
   // Take first 3000 chars to avoid token overflow
   const preview = content.slice(0, 3000);
 
@@ -660,7 +873,9 @@ export const captureRouter = router({
                 : null,
               raw_message: row.mapped.raw_message ?? null,
               self_reported_source: row.mapped.self_reported_source ?? null,
-              received_at: new Date().toISOString(),
+              received_at: row.mapped.received_at
+                ? new Date(row.mapped.received_at).toISOString()
+                : new Date().toISOString(),
               match_status: "unmatched",
             });
 
