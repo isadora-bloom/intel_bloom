@@ -17,13 +17,14 @@ import {
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
+import { trpc } from "@/lib/trpc/client";
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/capture", label: "Quick Capture", icon: ScanLine },
   { href: "/inquiries", label: "Inquiries", icon: Inbox },
   { href: "/clients", label: "Clients", icon: Users },
-  { href: "/matching", label: "Matching", icon: GitMerge },
+  { href: "/matching", label: "Matching", icon: GitMerge, badge: true },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
   { href: "/macro", label: "Market Pulse", icon: Globe },
   { href: "/vendors", label: "Vendors", icon: Store },
@@ -35,6 +36,9 @@ export default function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const supabase = createClient();
+  const { data: matchingCount } = trpc.matching.pendingCount.useQuery(undefined, {
+    staleTime: 1000 * 60 * 2,
+  });
 
   async function handleSignOut() {
     await supabase.auth.signOut();
@@ -50,8 +54,9 @@ export default function Sidebar() {
         </div>
 
         <nav className="flex-1 overflow-y-auto py-4 px-3">
-          {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
+          {NAV_ITEMS.map(({ href, label, icon: Icon, badge }) => {
             const active = pathname === href || pathname.startsWith(`${href}/`);
+            const count = badge ? (matchingCount?.count ?? 0) : 0;
             return (
               <Link
                 key={href}
@@ -63,7 +68,12 @@ export default function Sidebar() {
                 }`}
               >
                 <Icon size={16} />
-                {label}
+                <span className="flex-1">{label}</span>
+                {count > 0 && (
+                  <span className="text-xs bg-amber-100 text-amber-700 rounded-full px-1.5 py-0.5 font-medium min-w-[18px] text-center">
+                    {count}
+                  </span>
+                )}
               </Link>
             );
           })}

@@ -140,6 +140,7 @@ Identify the screenshot type:
 - Platform analytics/insights dashboards (The Knot/WeddingWire insights, impressions, saves, visitors, leads, link clicks, calls pages) → metric rows
 - Ad performance dashboards (Google Ads, Meta Ads) → metric rows
 - Billing/contract/invoice screenshots (showing what the venue PAYS for a listing or ad product) → spend rows
+  NOTE: "WeddingPro" is The Knot/WeddingWire's business platform. A WeddingPro billing screenshot is spend for the_knot or wedding_wire depending on which product is named in the contract. If the product name mentions "The Knot", use spend_platform = "the_knot". If it mentions "WeddingWire", use "wedding_wire".
 - Financial/booking spreadsheets → client rows
 
 For CHART screenshots: Read axes, legend, labels, and data points carefully. Estimate values from bar heights or line positions. Read every labeled data point. Each KPI = separate metric row. Monthly time-series = one metric row with metric_breakdown array.
@@ -709,6 +710,82 @@ export const captureRouter = router({
         }
       }
 
+      // Fire-and-forget duplicate scan after any new clients are added
+      if (results.inserted > 0) {
+        runDuplicateScan(ctx.supabase, ctx.venueId).catch(() => {});
+      }
+
       return results;
     }),
 });
+
+// ── BACKGROUND DUPLICATE SCAN ─────────────────────────────────────────────────
+// Called after every commit — finds client/metric duplicates and queues them
+
+async function runDuplicateScan(supabase: any, venueId: string) {
+  const [{ data: clients }, { data: existing }] = await Promise.all([
+    supabase
+      .from("clients")
+      .select("id, name_primary, email_primary, event_date")
+      .eq("venue_id", venueId),
+    supabase
+      .from("matching_queue")
+      .select("record_a_id, record_b_id")
+      .eq("venue_id", venueId)
+      .neq("status", "rejected"),
+  ]);
+
+  const alreadyQueued = new Set<string>(
+    (existing ?? []).map((e: any) => [e.record_a_id, e.record_b_id].sort().join(":"))
+  );
+
+  const toInsert: any[] = [];
+  const clientList = clients ?? [];
+
+  for (let i = 0; i < clientList.length; i++) {
+    for (let j = i + 1; j < clientList.length; j++) {
+      const a = clientList[i];
+      const b = clientList[j];
+      const pairKey = [a.id, b.id].sort().join(":");
+      if (alreadyQueued.has(pairKey)) continue;
+
+      let score = 0;
+      const signals: string[] = [];
+
+      if (
+        a.email_primary && b.email_primary &&
+        a.email_primary.toLowerCase().trim() === b.email_primary.toLowerCase().trim()
+      ) { score += 85; signals.push("same email"); }
+
+      if (a.event_date && b.event_date && a.event_date === b.event_date) {
+        score += 45; signals.push("same event date");
+      }
+
+      if (a.name_primary && b.name_primary) {
+        const aFirst = a.name_primary.trim().split(/\s+/)[0].toLowerCase();
+        const bFirst = b.name_primary.trim().split(/\s+/)[0].toLowerCase();
+        if (aFirst.length >= 3 && aFirst === bFirst) {
+          score += 25; signals.push("same first name");
+        }
+      }
+
+      if (score >= 60) {
+        toInsert.push({
+          venue_id: venueId,
+          record_a_type: "client",
+          record_a_id: a.id,
+          record_b_type: "client",
+          record_b_id: b.id,
+          match_score: score,
+          signals_matched: signals,
+          status: "pending",
+        });
+        alreadyQueued.add(pairKey);
+      }
+    }
+  }
+
+  if (toInsert.length > 0) {
+    await supabase.from("matching_queue").insert(toInsert);
+  }
+}
