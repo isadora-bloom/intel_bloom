@@ -429,6 +429,94 @@ async function addAnomalies(
       }
     }
 
+    // 6. Duplicate platform metric — check if this source+metric+period already exists
+    if (row.type === "metric" && m.metric_name && m.metric_platform) {
+      const platform = m.metric_platform.toLowerCase().replace(/\s+/g, "_");
+      const metricName = m.metric_name.toLowerCase().replace(/\s+/g, "_");
+
+      // Build date range from period label if we have it
+      const period = m.metric_period ?? null;
+      let periodStart: string | null = null;
+      let periodEnd: string | null = null;
+      if (period) {
+        const rangeMatch = period.match(/(\w+\s+\d{4})\s*[-–]\s*(\w+\s+\d{4})/);
+        const now = new Date();
+        if (rangeMatch) {
+          const s = new Date(rangeMatch[1]);
+          const e = new Date(rangeMatch[2]);
+          if (!isNaN(s.getTime())) periodStart = new Date(s.getFullYear(), s.getMonth(), 1).toISOString().split("T")[0];
+          if (!isNaN(e.getTime())) periodEnd = new Date(e.getFullYear(), e.getMonth() + 1, 0).toISOString().split("T")[0];
+        } else if (period.toLowerCase().includes("last 12 months")) {
+          periodEnd = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split("T")[0];
+          periodStart = new Date(now.getFullYear() - 1, now.getMonth(), 1).toISOString().split("T")[0];
+        }
+      }
+
+      let existingQuery = supabase
+        .from("platform_metrics")
+        .select("id, metric_value, captured_at")
+        .eq("venue_id", venueId)
+        .eq("platform", platform)
+        .eq("metric_name", metricName);
+
+      if (periodStart && periodEnd) {
+        existingQuery = existingQuery.eq("period_start", periodStart).eq("period_end", periodEnd);
+      }
+
+      const { data: existing } = await existingQuery.limit(1);
+
+      if (existing && existing.length > 0) {
+        const prev = existing[0];
+        const capturedDate = new Date(prev.captured_at).toLocaleDateString();
+        const prevVal = prev.metric_value;
+        const newVal = m.metric_value;
+        const sameValue = prevVal !== null && newVal !== null &&
+          Math.abs(parseFloat(String(prevVal)) - parseFloat(String(newVal))) < 1;
+
+        anomalies.push({
+          id: makeId(),
+          severity: sameValue ? "warning" : "question",
+          message: sameValue
+            ? `You already have ${m.metric_platform} ${m.metric_name} for this period (captured ${capturedDate}, value: ${prevVal}). This looks like a duplicate — skip it?`
+            : `You already have ${m.metric_platform} ${m.metric_name} for this period (captured ${capturedDate}, previous value: ${prevVal}, new value: ${newVal}). Import the updated figure?`,
+          field: "metric_value",
+          suggestion: sameValue ? "Skip this row" : "Import to update the existing value",
+          requiresAnswer: true,
+        });
+      }
+    }
+
+    // 7. Duplicate spend — check if this platform contract period already exists
+    if (row.type === "spend" && m.spend_platform) {
+      const platform = m.spend_platform.toLowerCase().replace(/\s+/g, "_");
+
+      let spendQuery = supabase
+        .from("source_spend")
+        .select("id, annual_spend_cents, contract_label, created_at")
+        .eq("venue_id", venueId)
+        .eq("platform", platform);
+
+      if (m.spend_contract_start) {
+        spendQuery = spendQuery.eq("contract_start", m.spend_contract_start);
+      }
+
+      const { data: existingSpend } = await spendQuery.limit(1);
+
+      if (existingSpend && existingSpend.length > 0) {
+        const prev = existingSpend[0];
+        const prevAmount = prev.annual_spend_cents ? `$${(prev.annual_spend_cents / 100).toLocaleString()}` : "unknown";
+        const capturedDate = new Date(prev.created_at).toLocaleDateString();
+        anomalies.push({
+          id: makeId(),
+          severity: "warning",
+          message: `${m.spend_platform} spend for this contract period already captured on ${capturedDate} (${prevAmount}/yr). Import again?`,
+          field: "spend_amount",
+          suggestion: "Skip if this is the same contract",
+          requiresAnswer: true,
+        });
+      }
+    }
+
     enriched.push({ ...row, anomalies });
   }
 
