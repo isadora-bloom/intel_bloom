@@ -9,6 +9,7 @@ import { matchingRouter } from "./routers/matching";
 import { uploadsRouter } from "./routers/uploads";
 import { vendorsRouter } from "./routers/vendors";
 import { insightsRouter } from "./routers/insights";
+import { captureRouter } from "./routers/capture";
 
 export const appRouter = router({
   venues: venuesRouter,
@@ -21,6 +22,7 @@ export const appRouter = router({
   uploads: uploadsRouter,
   vendors: vendorsRouter,
   insights: insightsRouter,
+  capture: captureRouter,
 });
 
 export type AppRouter = typeof appRouter;

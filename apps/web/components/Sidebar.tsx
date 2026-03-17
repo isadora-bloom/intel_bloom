@@ -13,12 +13,14 @@ import {
   Settings,
   GitMerge,
   LogOut,
+  ScanLine,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/capture", label: "Quick Capture", icon: ScanLine },
   { href: "/inquiries", label: "Inquiries", icon: Inbox },
   { href: "/clients", label: "Clients", icon: Users },
   { href: "/matching", label: "Matching", icon: GitMerge },
