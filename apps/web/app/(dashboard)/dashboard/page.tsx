@@ -16,6 +16,7 @@ import {
   Lightbulb,
   ChevronDown,
   ChevronUp,
+  Activity,
 } from "lucide-react";
 
 const SENTIMENT_STYLES: Record<
@@ -34,6 +35,7 @@ const TYPE_ICONS: Record<string, React.ElementType> = {
   seasonal_pricing: TrendingDown,
   leading_indicator: Search,
   macro_context: Globe,
+  platform_activity: Activity,
 };
 
 const SENTIMENT_TREND_ICONS: Record<string, React.ElementType> = {

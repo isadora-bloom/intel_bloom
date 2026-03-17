@@ -10,7 +10,8 @@ export interface BriefingInsight {
     | "weather_explainer"
     | "seasonal_pricing"
     | "leading_indicator"
-    | "macro_context";
+    | "macro_context"
+    | "platform_activity";
   headline: string;
   body: string;
   action?: string;
@@ -54,6 +55,8 @@ export const insightsRouter = router({
       { data: macroData },
       { data: beigeBook },
       { data: acquiCosts },
+      { data: sourceSpend },
+      { data: platformMetrics },
     ] = await Promise.all([
       ctx.supabase
         .from("clients")
@@ -66,9 +69,9 @@ export const insightsRouter = router({
             .from("weather_monthly")
             .select("month, year, precipitation_inches, weather_score, temp_avg_f")
             .eq("noaa_station_id", venue.noaa_station_id)
-            .eq("month", new Date().getMonth() + 1)  // current calendar month only
+            .eq("month", new Date().getMonth() + 1)
             .order("year", { ascending: false })
-            .limit(8)  // up to 8 years of this month
+            .limit(8)
         : Promise.resolve({ data: null }),
 
       venue?.noaa_station_id
@@ -125,6 +128,19 @@ export const insightsRouter = router({
         .select("platform, cost_cents")
         .eq("venue_id", ctx.venueId)
         .not("cost_cents", "is", null),
+
+      // Annual spend per platform (from uploaded billing screenshots)
+      ctx.supabase
+        .from("source_spend")
+        .select("platform, annual_spend_cents, contract_label, contract_start, contract_end")
+        .eq("venue_id", ctx.venueId),
+
+      // Platform performance metrics (impressions, saves, visitors etc from screenshots)
+      ctx.supabase
+        .from("platform_metrics")
+        .select("platform, metric_name, metric_value, period_label, breakdown, comparison, captured_at")
+        .eq("venue_id", ctx.venueId)
+        .order("captured_at", { ascending: false }),
     ]);
 
     // ── INSIGHT 1: SOURCE PERFORMANCE ────────────────────────────────────────
@@ -144,24 +160,43 @@ export const insightsRouter = router({
         if (c.revenue_cents) entry.revenue.push(c.revenue_cents);
       }
 
-      // Supplement with touchpoint costs
+      // Supplement with per-booking touchpoint costs
       for (const t of acquiCosts ?? []) {
-        const entry = sourceMap.get(t.platform);
-        if (entry && t.cost_cents) entry.costs.push(t.cost_cents);
+        const entry = sourceMap.get(t.platform as string);
+        if (entry && t.cost_cents) entry.costs.push(t.cost_cents as number);
+      }
+
+      // Build annual spend map from captured billing screenshots
+      // source_spend has annual_spend_cents for the whole contract period;
+      // divide by booked count to get cost-per-booking
+      const annualSpendMap = new Map<string, number>();
+      for (const s of sourceSpend ?? []) {
+        if (s.annual_spend_cents) {
+          annualSpendMap.set(s.platform as string, s.annual_spend_cents as number);
+        }
       }
 
       const rows = Array.from(sourceMap.entries())
-        .map(([source, s]) => ({
-          source,
-          inquiries: s.inquiries,
-          booked: s.booked,
-          convRate: s.inquiries > 0 ? s.booked / s.inquiries : 0,
-          avgRevenue: s.revenue.length ? Math.round(avg(s.revenue) / 100) : null,
-          costPerBooking:
-            s.costs.length > 0 && s.booked > 0
-              ? Math.round(s.costs.reduce((a, b) => a + b, 0) / 100 / s.booked)
+        .map(([source, s]) => {
+          // Prefer per-touchpoint costs; fall back to annual spend ÷ bookings
+          let costPerBooking: number | null = null;
+          if (s.costs.length > 0 && s.booked > 0) {
+            costPerBooking = Math.round(s.costs.reduce((a, b) => a + b, 0) / 100 / s.booked);
+          } else if (annualSpendMap.has(source) && s.booked > 0) {
+            costPerBooking = Math.round((annualSpendMap.get(source)! / 100) / s.booked);
+          }
+          return {
+            source,
+            inquiries: s.inquiries,
+            booked: s.booked,
+            convRate: s.inquiries > 0 ? s.booked / s.inquiries : 0,
+            avgRevenue: s.revenue.length ? Math.round(avg(s.revenue) / 100) : null,
+            annualSpendUsd: annualSpendMap.has(source)
+              ? Math.round(annualSpendMap.get(source)! / 100)
               : null,
-        }))
+            costPerBooking,
+          };
+        })
         .sort((a, b) => b.booked - a.booked);
 
       const best = rows.find((r) => r.convRate === Math.max(...rows.map((x) => x.convRate)));
@@ -179,26 +214,39 @@ export const insightsRouter = router({
         const sorted = [...costRows].sort((a, b) => a.costPerBooking! - b.costPerBooking!);
         const cheapest = sorted[0];
         const priciest = sorted[sorted.length - 1];
-        headline = `${cheapest.source.replace(/_/g, " ")} costs $${cheapest.costPerBooking?.toLocaleString()} per booking — ${priciest.source.replace(/_/g, " ")} costs $${priciest.costPerBooking?.toLocaleString()}`;
-        body = `Your cheapest paid channel per booked wedding is ${cheapest.source.replace(/_/g, " ")} at $${cheapest.costPerBooking?.toLocaleString()}, converting at ${Math.round(cheapest.convRate * 100)}%.`;
+        const cheapestName = cheapest.source.replace(/_/g, " ");
+        const prieiestName = priciest.source.replace(/_/g, " ");
+        if (sorted.length > 1) {
+          headline = `${cheapestName} costs $${cheapest.costPerBooking?.toLocaleString()} per booking — ${prieiestName} costs $${priciest.costPerBooking?.toLocaleString()}`;
+        } else {
+          headline = `${cheapestName} costs $${cheapest.costPerBooking?.toLocaleString()} per booked wedding`;
+        }
+        body = `Your paid channel ${cheapestName} is costing $${cheapest.costPerBooking?.toLocaleString()} per booked wedding`;
+        if (cheapest.annualSpendUsd) {
+          body += ` ($${cheapest.annualSpendUsd.toLocaleString()}/yr ÷ ${cheapest.booked} bookings)`;
+        }
+        body += `, converting at ${Math.round(cheapest.convRate * 100)}%.`;
         if (zeroCostRows.length > 0) {
           body += ` ${zeroCostRows.map((r) => r.source.replace(/_/g, " ")).join(" and ")} cost nothing and convert at ${Math.round(avg(zeroCostRows.map((r) => r.convRate)) * 100)}%.`;
         }
-        sentiment = cheapest.costPerBooking! < 1000 ? "positive" : "neutral";
-        for (const r of rows.slice(0, 4)) {
-          supporting.push({
-            label: r.source.replace(/_/g, " "),
-            value: `${Math.round(r.convRate * 100)}% conv${r.costPerBooking ? ` · $${r.costPerBooking.toLocaleString()}/booking` : ""}`,
-          });
+        sentiment = cheapest.costPerBooking! < 1500 ? "positive" : cheapest.costPerBooking! > 5000 ? "caution" : "neutral";
+        for (const r of rows.slice(0, 5)) {
+          const parts = [`${Math.round(r.convRate * 100)}% conv`];
+          if (r.costPerBooking) parts.push(`$${r.costPerBooking.toLocaleString()}/booking`);
+          if (r.annualSpendUsd && !r.costPerBooking) parts.push(`$${r.annualSpendUsd.toLocaleString()}/yr spend`);
+          supporting.push({ label: r.source.replace(/_/g, " "), value: parts.join(" · ") });
         }
       } else if (best) {
         headline = `${best.source.replace(/_/g, " ")} converts at ${Math.round(best.convRate * 100)}% — your best performing source`;
         body = `Across ${rows.reduce((s, r) => s + r.inquiries, 0)} total inquiries, ${best.source.replace(/_/g, " ")} has the highest booking rate at ${Math.round(best.convRate * 100)}%.`;
-        if (zeroCostRows.length > 0) {
-          body += ` Add acquisition cost data in Settings to see cost-per-booking.`;
+        const uncostedPaidRows = rows.filter((r) => annualSpendMap.has(r.source) && r.booked === 0);
+        if (uncostedPaidRows.length > 0) {
+          body += ` Upload billing screenshots for ${uncostedPaidRows.map((r) => r.source.replace(/_/g, " ")).join(", ")} to see cost per booking.`;
+        } else if (zeroCostRows.length > 0) {
+          body += ` Upload billing screenshots in Quick Capture to see cost per booking.`;
         }
         sentiment = best.convRate > 0.4 ? "positive" : "neutral";
-        for (const r of rows.slice(0, 4)) {
+        for (const r of rows.slice(0, 5)) {
           supporting.push({
             label: r.source.replace(/_/g, " "),
             value: `${r.booked}/${r.inquiries} booked (${Math.round(r.convRate * 100)}%)`,
@@ -228,6 +276,108 @@ export const insightsRouter = router({
         sentiment: "neutral",
         dataAvailable: false,
       });
+    }
+
+    // ── INSIGHT 1b: PLATFORM ACTIVITY ────────────────────────────────────────
+    // Uses captured platform_metrics (impressions, saves, visitors etc)
+    if (platformMetrics && platformMetrics.length > 0) {
+      // Group by metric_name, take the most recently captured value per metric
+      const metricMap = new Map<string, { platform: string; value: number; breakdown: any[]; comparison: string | null }>();
+      for (const m of platformMetrics) {
+        const key = `${m.platform}:${m.metric_name}`;
+        if (!metricMap.has(key)) {
+          metricMap.set(key, {
+            platform: m.platform as string,
+            value: parseFloat(String(m.metric_value ?? 0)),
+            breakdown: (m.breakdown as any[]) ?? [],
+            comparison: m.comparison as string | null,
+          });
+        }
+      }
+
+      // Look for notable signals in the breakdown data
+      const signals: string[] = [];
+      const supportingPlatform: { label: string; value: string }[] = [];
+
+      for (const [key, m] of metricMap) {
+        const metricLabel = key.split(":")[1].replace(/_/g, " ");
+        const platformLabel = m.platform.replace(/_/g, " ");
+
+        // Check if breakdown shows a recent drop (last 2 months vs prior 2 months)
+        if (m.breakdown && m.breakdown.length >= 4) {
+          const recent = m.breakdown.slice(-2).map((p: any) => Number(p.value ?? 0));
+          const prior = m.breakdown.slice(-4, -2).map((p: any) => Number(p.value ?? 0));
+          const recentAvg = avg(recent);
+          const priorAvg = avg(prior);
+          if (priorAvg > 0) {
+            const change = pctChange(recentAvg, priorAvg);
+            if (Math.abs(change) >= 15) {
+              const dir = change > 0 ? "up" : "down";
+              signals.push(`${platformLabel} ${metricLabel} is ${dir} ${Math.abs(change)}% over the last two months`);
+            }
+          }
+        }
+
+        // Surface comparison text if available
+        if (m.comparison) {
+          signals.push(`${platformLabel} ${metricLabel}: ${m.comparison}`);
+        }
+
+        if (m.value > 0) {
+          supportingPlatform.push({
+            label: `${platformLabel} ${metricLabel}`,
+            value: m.value >= 1000
+              ? `${(m.value / 1000).toFixed(1)}k`
+              : String(Math.round(m.value)),
+          });
+        }
+      }
+
+      // Determine a lead signal for the headline
+      const savesData = [...metricMap.entries()].find(([k]) => k.includes("saves"));
+      const impressionsData = [...metricMap.entries()].find(([k]) => k.includes("impressions"));
+      const visitorsData = [...metricMap.entries()].find(([k]) => k.includes("visitors"));
+
+      let platformHeadline = "";
+      let platformBody = "";
+      let platformSentiment: BriefingInsight["sentiment"] = "neutral";
+
+      if (signals.length > 0) {
+        platformHeadline = signals[0].charAt(0).toUpperCase() + signals[0].slice(1);
+        platformBody = signals.join(". ") + ".";
+        platformSentiment = signals.some((s) => s.includes("down")) ? "caution" : "positive";
+      } else if (savesData) {
+        const [, s] = savesData;
+        platformHeadline = `${Math.round(s.value).toLocaleString()} couples saved your listing in the last 12 months`;
+        platformBody = `Saves are a leading indicator — couples who save typically inquire within 2–4 months.`;
+        if (impressionsData) {
+          const impressionVal = impressionsData[1].value;
+          const saveRate = s.value / impressionVal * 100;
+          platformBody += ` Your save rate is ${saveRate.toFixed(1)}% of impressions.`;
+        }
+        platformSentiment = s.value > 400 ? "positive" : "neutral";
+      } else if (impressionsData) {
+        const [, imp] = impressionsData;
+        platformHeadline = `${(imp.value / 1000).toFixed(1)}k impressions in the last 12 months on ${imp.platform.replace(/_/g, " ")}`;
+        platformBody = `Impressions show how often couples are seeing your listing. `;
+        if (visitorsData) {
+          const clickThrough = visitorsData[1].value / imp.value * 100;
+          platformBody += `${clickThrough.toFixed(1)}% clicked through to your storefront.`;
+        }
+        platformSentiment = "neutral";
+      }
+
+      if (platformHeadline) {
+        insights.push({
+          id: "platform_activity",
+          type: "platform_activity",
+          headline: platformHeadline,
+          body: platformBody,
+          supporting: supportingPlatform.slice(0, 6),
+          sentiment: platformSentiment,
+          dataAvailable: true,
+        });
+      }
     }
 
     // ── INSIGHT 2: WEATHER EXPLAINER ─────────────────────────────────────────
