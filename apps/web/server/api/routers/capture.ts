@@ -17,6 +17,10 @@ export type CaptureFileType =
   | "review_screenshot"
   | "vendor_list_csv"
   | "inquiry_csv"
+  | "analytics_chart"
+  | "ads_dashboard"
+  | "google_analytics"
+  | "social_insights"
   | "unknown";
 
 export interface ExtractedField {
@@ -27,7 +31,7 @@ export interface ExtractedField {
 
 export interface CaptureRow {
   id: string; // temp local id
-  type: "client" | "inquiry" | "vendor" | "review" | "unknown";
+  type: "client" | "inquiry" | "vendor" | "review" | "metric" | "unknown";
   fields: ExtractedField[];
   mapped: Record<string, string | null>; // field -> value, ready to write
   anomalies: CaptureAnomaly[];
@@ -127,36 +131,57 @@ async function classifyImage(base64: string, mimeType: string): Promise<Classify
           },
           {
             type: "text",
-            text: `You are extracting data from a wedding venue business screenshot.
+            text: `You are extracting data from a wedding venue business screenshot. You can read both tabular data AND visual charts (bar charts, line graphs, pie charts, tables with numbers).
 
-Classify what this screenshot shows and extract all structured data from it.
+First, identify what type of screenshot this is:
+- Inquiry screenshots (The Knot, WeddingWire, Instagram DMs, email) → extract contact/inquiry rows
+- Review screenshots (Google, The Knot, WeddingWire) → extract review rows
+- Analytics/chart screenshots (Google Analytics, Google Ads, The Knot stats, Meta Insights, ad performance dashboards, booking reports) → extract metric rows by reading values from charts/tables
+- Financial/booking spreadsheets → extract client/financial rows
 
-Respond with ONLY valid JSON in this exact format:
+For CHART/ANALYTICS screenshots: Read the axes, legend, labels, and data points carefully. Estimate bar heights, read line graph values at each point, extract all visible numbers from tables. Each distinct metric or data series becomes a separate "metric" row.
+
+Respond with ONLY valid JSON:
 {
-  "fileType": one of: "knot_inquiry_screenshot" | "instagram_inquiry_screenshot" | "email_inquiry_screenshot" | "review_screenshot" | "honeybook_csv" | "unknown",
-  "fileTypeLabel": "human-readable label",
+  "fileType": "knot_inquiry_screenshot" | "instagram_inquiry_screenshot" | "email_inquiry_screenshot" | "review_screenshot" | "analytics_chart" | "ads_dashboard" | "google_analytics" | "social_insights" | "unknown",
+  "fileTypeLabel": "human-readable label e.g. 'Google Ads Performance' or 'The Knot Inquiry'",
   "confidence": "high" | "medium" | "low",
-  "summary": "One sentence describing what you found",
+  "summary": "One sentence — e.g. 'Google Ads dashboard showing 847 clicks and $12.40 CPC for March 2025'",
   "rows": [
     {
-      "type": "client" | "inquiry" | "review" | "unknown",
+      "type": "inquiry" | "client" | "review" | "metric" | "unknown",
       "fields": [
+        // For inquiry/client rows:
         { "field": "name_primary", "value": "...", "confidence": "high" },
         { "field": "email_primary", "value": "...", "confidence": "high" },
         { "field": "phone_primary", "value": "...", "confidence": "medium" },
         { "field": "event_date", "value": "YYYY-MM-DD or raw text", "confidence": "high" },
         { "field": "guest_count_initial", "value": "...", "confidence": "medium" },
         { "field": "self_reported_source", "value": "...", "confidence": "high" },
-        { "field": "raw_message", "value": "...", "confidence": "high" },
-        { "field": "review_star_rating", "value": "...", "confidence": "high" },
+        { "field": "raw_message", "value": "full message text", "confidence": "high" },
+        { "field": "first_touch_platform", "value": "the_knot|wedding_wire|instagram|google_ads|google_organic|referral|direct|other", "confidence": "high" },
+
+        // For review rows:
+        { "field": "review_star_rating", "value": "4.5", "confidence": "high" },
         { "field": "review_text", "value": "...", "confidence": "high" },
-        { "field": "review_platform", "value": "...", "confidence": "high" }
+        { "field": "review_platform", "value": "google|the_knot|wedding_wire|other", "confidence": "high" },
+        { "field": "name_primary", "value": "reviewer name if visible", "confidence": "medium" },
+
+        // For metric rows (charts, analytics, ads):
+        { "field": "metric_name", "value": "e.g. Clicks, Impressions, Cost Per Click, Inquiries, Bookings, CTR, ROAS, Reach, Leads", "confidence": "high" },
+        { "field": "metric_value", "value": "the numeric value, e.g. 847 or 12.40 or 3.2%", "confidence": "high" },
+        { "field": "metric_period", "value": "e.g. March 2025, Q1 2025, last 30 days, 2024", "confidence": "medium" },
+        { "field": "metric_platform", "value": "e.g. Google Ads, Meta, The Knot, WeddingWire, Instagram, Overall", "confidence": "high" },
+        { "field": "metric_comparison", "value": "change vs prior period if visible, e.g. +12% vs last month", "confidence": "medium" },
+        { "field": "metric_breakdown", "value": "if it's a breakdown chart, list all segments as JSON array string e.g. [{label:Mon,value:45},{label:Tue,value:52}]", "confidence": "medium" }
       ]
     }
   ]
 }
 
-Only include fields you can actually see. Omit fields that aren't visible. Extract every person/inquiry/review visible.`,
+IMPORTANT for charts: If a chart shows multiple data points (e.g. clicks by month for 6 months), create ONE metric row with metric_breakdown containing all points. If a dashboard shows multiple distinct KPIs (clicks, cost, CTR, conversions), create a SEPARATE metric row for each KPI. Read values as precisely as you can from the visual.
+
+Only include fields you can actually see. Extract every visible person/inquiry/review/metric.`,
           },
         ],
       },
@@ -465,7 +490,7 @@ export const captureRouter = router({
         rows: z.array(
           z.object({
             id: z.string(),
-            type: z.enum(["client", "inquiry", "vendor", "unknown"]),
+            type: z.enum(["client", "inquiry", "vendor", "review", "metric", "unknown"]),
             skip: z.boolean().default(false),
             mapped: z.record(z.string().nullable()),
             anomalyAnswers: z.record(z.string()), // anomaly.id -> answer
@@ -553,6 +578,71 @@ export const captureRouter = router({
             } else {
               results.inserted++;
             }
+          } else if (row.type === "review") {
+            // Reviews go into clients table with review fields populated
+            const { error } = await ctx.supabase.from("clients").insert({
+              venue_id: ctx.venueId,
+              name_primary: row.mapped.name_primary ?? null,
+              email_primary: row.mapped.email_primary ?? null,
+              status: "event_complete",
+              review_star_rating: row.mapped.review_star_rating
+                ? parseFloat(row.mapped.review_star_rating)
+                : null,
+              review_text: row.mapped.review_text ?? null,
+              review_left: true,
+              review_platform: row.mapped.review_platform ?? null,
+            });
+
+            if (error) {
+              results.errors.push(`Review (${row.mapped.name_primary ?? "unknown"}): ${error.message}`);
+            } else {
+              results.inserted++;
+            }
+          } else if (row.type === "metric") {
+            // Store analytics/chart metrics as annotations
+            const period = row.mapped.metric_period ?? null;
+            // Try to parse a date from the period string; default to current month
+            const now = new Date();
+            let periodStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split("T")[0];
+            let periodEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split("T")[0];
+            if (period) {
+              const parsed = new Date(period);
+              if (!isNaN(parsed.getTime())) {
+                periodStart = new Date(parsed.getFullYear(), parsed.getMonth(), 1).toISOString().split("T")[0];
+                periodEnd = new Date(parsed.getFullYear(), parsed.getMonth() + 1, 0).toISOString().split("T")[0];
+              }
+            }
+            const metricVal = row.mapped.metric_value
+              ? parseFloat(row.mapped.metric_value.replace(/[^0-9.-]/g, ""))
+              : null;
+            const notes = JSON.stringify({
+              metric_name: row.mapped.metric_name,
+              metric_value: row.mapped.metric_value,
+              metric_period: period,
+              metric_comparison: row.mapped.metric_comparison,
+              metric_breakdown: row.mapped.metric_breakdown,
+            });
+            const { error } = await ctx.supabase.from("annotations").insert({
+              venue_id: ctx.venueId,
+              period_start: periodStart,
+              period_end: periodEnd,
+              annotation_type: "captured_metric",
+              category_detail: row.mapped.metric_platform ?? "unknown",
+              notes,
+              source: "capture_upload",
+              detected_signal: row.mapped.metric_name ?? null,
+              detected_value: !isNaN(metricVal!) ? metricVal : null,
+              exclude_from_patterns: false,
+              propagate_to_aggregate: false,
+            });
+            if (error) {
+              results.errors.push(`Metric (${row.mapped.metric_name}): ${error.message}`);
+            } else {
+              results.inserted++;
+            }
+          } else {
+            // unknown type — count as skipped so user sees it in the result
+            results.skipped++;
           }
         } catch (e: any) {
           results.errors.push(e.message);

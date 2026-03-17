@@ -156,13 +156,19 @@ function RowCard({
   onAnswer: (anomalyId: string, answer: string) => void;
   onToggleExpand: () => void;
 }) {
-  const primaryName = row.mapped.name_primary ?? row.mapped.vendor_name ?? "Unknown";
+  const isMetric = row.type === "metric";
+  const primaryName = isMetric
+    ? (row.mapped.metric_name ?? "Metric")
+    : (row.mapped.name_primary ?? row.mapped.vendor_name ?? "Unknown");
   const eventDate = row.mapped.event_date;
+  const metricValue = row.mapped.metric_value;
+  const metricPlatform = row.mapped.metric_platform;
+  const metricPeriod = row.mapped.metric_period;
   const hasBlockers = row.anomalies.some(
     (a) => (a.severity === "error" || a.requiresAnswer) && !anomalyAnswers[a.id]
   );
   const shownFields = Object.entries(row.mapped).filter(
-    ([k, v]) => v && !["raw_message", "review_text"].includes(k)
+    ([k, v]) => v && !["raw_message", "review_text", "metric_breakdown", "metric_name", "metric_value", "metric_platform", "metric_period", "metric_comparison"].includes(k)
   );
 
   return (
@@ -180,7 +186,11 @@ function RowCard({
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium text-gray-900 truncate">{primaryName}</p>
           <p className="text-xs text-gray-400">
-            {row.type}{eventDate ? ` · ${eventDate}` : ""}
+            <span className="capitalize">{row.type}</span>
+            {isMetric && metricValue ? <span className="text-gray-700 font-medium"> · {metricValue}</span> : null}
+            {isMetric && metricPlatform ? ` · ${metricPlatform}` : null}
+            {isMetric && metricPeriod ? ` · ${metricPeriod}` : null}
+            {!isMetric && eventDate ? ` · ${eventDate}` : ""}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -218,8 +228,45 @@ function RowCard({
       {/* Expanded: fields + anomalies */}
       {expanded && !skipped && (
         <div className="border-t border-gray-100 px-4 py-3 space-y-3">
-          {/* Extracted fields */}
-          {shownFields.length > 0 && (
+          {/* Metric fields */}
+          {isMetric && (
+            <div className="space-y-1.5">
+              {[
+                ["Metric", row.mapped.metric_name],
+                ["Value", row.mapped.metric_value],
+                ["Platform", row.mapped.metric_platform],
+                ["Period", row.mapped.metric_period],
+                ["vs Prior", row.mapped.metric_comparison],
+              ].filter(([, v]) => v).map(([label, val]) => (
+                <div key={label} className="flex gap-3">
+                  <p className="text-xs text-gray-400 w-16 flex-shrink-0">{label}</p>
+                  <p className="text-xs text-gray-800">{val}</p>
+                </div>
+              ))}
+              {row.mapped.metric_breakdown && (() => {
+                try {
+                  const pts = JSON.parse(row.mapped.metric_breakdown);
+                  if (Array.isArray(pts)) {
+                    return (
+                      <div>
+                        <p className="text-xs text-gray-400 mb-1">Breakdown</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {pts.map((pt: any, i: number) => (
+                            <span key={i} className="text-xs bg-gray-100 rounded px-2 py-0.5">
+                              {pt.label}: <span className="font-medium">{pt.value}</span>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  }
+                } catch {}
+                return <p className="text-xs text-gray-600">{row.mapped.metric_breakdown}</p>;
+              })()}
+            </div>
+          )}
+          {/* Extracted fields (non-metric) */}
+          {!isMetric && shownFields.length > 0 && (
             <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
               {shownFields.map(([key, val]) => (
                 <div key={key}>
@@ -476,7 +523,7 @@ export default function CapturePage() {
     const rows = files.flatMap((e) =>
       (e.result?.rows ?? []).map((row) => ({
         id: row.id,
-        type: row.type as "client" | "inquiry" | "vendor" | "unknown",
+        type: row.type as "client" | "inquiry" | "vendor" | "review" | "unknown",
         skip: e.skipped.has(row.id),
         mapped: row.mapped,
         anomalyAnswers: e.anomalyAnswers,
