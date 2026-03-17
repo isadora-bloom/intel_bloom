@@ -551,9 +551,15 @@ export const insightsRouter = router({
         apiKey: process.env.ANTHROPIC_API_KEY,
       });
 
+      // Fetch venue first (needed for conditional queries below)
+      const { data: venue } = await ctx.supabase
+        .from("venues")
+        .select("name, city, state, noaa_station_id, google_trends_metro, fed_district")
+        .eq("id", ctx.venueId)
+        .single();
+
       // Gather context snapshot
       const [
-        { data: venue },
         { data: clients },
         { data: recentInquiries },
         { data: prevInquiries },
@@ -562,12 +568,6 @@ export const insightsRouter = router({
         { data: pulse },
         { data: sourceSummary },
       ] = await Promise.all([
-        ctx.supabase
-          .from("venues")
-          .select("name, city, state, noaa_station_id, google_trends_metro, fed_district")
-          .eq("id", ctx.venueId)
-          .single(),
-
         ctx.supabase
           .from("clients")
           .select(
@@ -592,7 +592,7 @@ export const insightsRouter = router({
           ? ctx.supabase
               .from("weather_monthly")
               .select("month, year, weather_score, precipitation_inches, temp_avg_f")
-              .eq("noaa_station_id", venue.noaa_station_id ?? "")
+              .eq("noaa_station_id", venue.noaa_station_id)
               .order("year", { ascending: false })
               .order("month", { ascending: false })
               .limit(12)
