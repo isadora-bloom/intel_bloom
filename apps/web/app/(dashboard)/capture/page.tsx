@@ -158,10 +158,13 @@ function RowCard({
 }) {
   const isMetric = row.type === "metric";
   const isSpend = row.type === "spend";
+  const isLead = row.type === "lead";
   const primaryName = isMetric
     ? (row.mapped.metric_name ?? "Metric")
     : isSpend
     ? (row.mapped.spend_product_name ?? `${row.mapped.spend_platform} spend`)
+    : isLead
+    ? (row.mapped.lead_name ?? "Unknown")
     : (row.mapped.name_primary ?? row.mapped.vendor_name ?? "Unknown");
   const eventDate = row.mapped.event_date;
   const metricValue = row.mapped.metric_value;
@@ -175,6 +178,7 @@ function RowCard({
       "raw_message", "review_text",
       "metric_breakdown", "metric_name", "metric_value", "metric_platform", "metric_period", "metric_comparison",
       "spend_platform", "spend_amount", "spend_period", "spend_contract_start", "spend_contract_end", "spend_product_name",
+      "lead_name", "lead_platform", "lead_touch_type", "lead_source_date", "lead_raw_activity",
     ].includes(k)
   );
 
@@ -199,7 +203,10 @@ function RowCard({
             {isMetric && metricPeriod ? ` · ${metricPeriod}` : null}
             {isSpend && row.mapped.spend_amount ? <span className="text-gray-700 font-medium"> · ${row.mapped.spend_amount}/yr</span> : null}
             {isSpend && row.mapped.spend_contract_start ? ` · ${row.mapped.spend_contract_start}` : null}
-            {!isMetric && !isSpend && eventDate ? ` · ${eventDate}` : ""}
+            {isLead && row.mapped.lead_touch_type ? ` · ${row.mapped.lead_touch_type.replace(/_/g, " ")}` : null}
+            {isLead && row.mapped.lead_platform ? ` · ${row.mapped.lead_platform}` : null}
+            {isLead && row.mapped.lead_source_date ? ` · ${row.mapped.lead_source_date}` : null}
+            {!isMetric && !isSpend && !isLead && eventDate ? ` · ${eventDate}` : ""}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -237,6 +244,23 @@ function RowCard({
       {/* Expanded: fields + anomalies */}
       {expanded && !skipped && (
         <div className="border-t border-gray-100 px-4 py-3 space-y-3">
+          {/* Lead fields */}
+          {isLead && (
+            <div className="space-y-1.5">
+              {[
+                ["Name", row.mapped.lead_name],
+                ["Touch", row.mapped.lead_touch_type?.replace(/_/g, " ")],
+                ["Platform", row.mapped.lead_platform],
+                ["Date", row.mapped.lead_source_date],
+                ["Activity", row.mapped.lead_raw_activity],
+              ].filter(([, v]) => v).map(([label, val]) => (
+                <div key={label} className="flex gap-3">
+                  <p className="text-xs text-gray-400 w-16 flex-shrink-0">{label}</p>
+                  <p className="text-xs text-gray-800">{val}</p>
+                </div>
+              ))}
+            </div>
+          )}
           {/* Spend fields */}
           {isSpend && (
             <div className="space-y-1.5">
@@ -292,8 +316,8 @@ function RowCard({
               })()}
             </div>
           )}
-          {/* Extracted fields (non-metric) */}
-          {!isMetric && shownFields.length > 0 && (
+          {/* Extracted fields (non-metric, non-spend, non-lead) */}
+          {!isMetric && !isSpend && !isLead && shownFields.length > 0 && (
             <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
               {shownFields.map(([key, val]) => (
                 <div key={key}>

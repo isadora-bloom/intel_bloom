@@ -32,7 +32,7 @@ export interface ExtractedField {
 
 export interface CaptureRow {
   id: string; // temp local id
-  type: "client" | "inquiry" | "vendor" | "review" | "metric" | "spend" | "unknown";
+  type: "client" | "inquiry" | "vendor" | "review" | "metric" | "spend" | "lead" | "unknown";
   fields: ExtractedField[];
   mapped: Record<string, string | null>; // field -> value, ready to write
   anomalies: CaptureAnomaly[];
@@ -354,28 +354,64 @@ function parseKnotActivityLog(content: string): ClassifyResult {
         });
       } else if (action === "saved") {
         dailyStats[currentDate].saves += 1;
-        // Named saves are warm leads — store as inquiry with save context
+        // Named save = pre-inquiry funnel touch, not an inquiry
         rows.push({
           id: makeId(),
-          type: "inquiry",
+          type: "lead",
           fields: [
-            { field: "name_primary", value: personName, confidence: "high" },
-            { field: "first_touch_platform", value: "the_knot", confidence: "high" },
-            { field: "received_at", value: currentDate, confidence: "high" },
+            { field: "name", value: personName, confidence: "high" },
+            { field: "touch_type", value: "save", confidence: "high" },
+            { field: "source_date", value: currentDate, confidence: "high" },
           ],
           mapped: {
-            name_primary: personName,
-            first_touch_platform: "the_knot",
-            received_at: currentDate,
-            raw_message: `${personName} saved your Storefront on The Knot on ${currentDate} (no inquiry yet)`,
-            self_reported_source: "the_knot_save",
+            lead_name: personName,
+            lead_platform: "the_knot",
+            lead_touch_type: "save",
+            lead_source_date: currentDate,
+            lead_raw_activity: line,
           },
           anomalies: [],
         });
       } else if (action === "visited") {
         dailyStats[currentDate].visits += 1;
+        // Named storefront visit = pre-inquiry funnel touch
+        rows.push({
+          id: makeId(),
+          type: "lead",
+          fields: [
+            { field: "name", value: personName, confidence: "high" },
+            { field: "touch_type", value: "storefront_visit", confidence: "high" },
+            { field: "source_date", value: currentDate, confidence: "high" },
+          ],
+          mapped: {
+            lead_name: personName,
+            lead_platform: "the_knot",
+            lead_touch_type: "storefront_visit",
+            lead_source_date: currentDate,
+            lead_raw_activity: line,
+          },
+          anomalies: [],
+        });
       } else if (action.includes("website")) {
         dailyStats[currentDate].linkClicks += 1;
+        // Named website visit = link click lead
+        rows.push({
+          id: makeId(),
+          type: "lead",
+          fields: [
+            { field: "name", value: personName, confidence: "high" },
+            { field: "touch_type", value: "website_visit", confidence: "high" },
+            { field: "source_date", value: currentDate, confidence: "high" },
+          ],
+          mapped: {
+            lead_name: personName,
+            lead_platform: "the_knot",
+            lead_touch_type: "website_visit",
+            lead_source_date: currentDate,
+            lead_raw_activity: line,
+          },
+          anomalies: [],
+        });
       }
       i++;
       continue;
@@ -437,15 +473,16 @@ function parseKnotActivityLog(content: string): ClassifyResult {
     });
   }
 
-  const inquiryRows = rows.filter((r) => r.type === "inquiry" && r.mapped.raw_message?.includes("sent an inquiry"));
-  const saveRows = rows.filter((r) => r.type === "inquiry" && r.mapped.self_reported_source === "the_knot_save");
+  const inquiryRows = rows.filter((r) => r.type === "inquiry");
+  const saveLeads = rows.filter((r) => r.type === "lead" && r.mapped.lead_touch_type === "save");
+  const visitLeads = rows.filter((r) => r.type === "lead" && r.mapped.lead_touch_type === "storefront_visit");
 
   return {
     fileType: "knot_activity_log" as any,
     fileTypeLabel: "The Knot Activity Log",
     confidence: "high",
     rows,
-    summary: `The Knot activity log from ${periodStart ?? "?"} to ${periodEnd ?? "?"}. ${inquiryRows.length} named inquiries, ${saveRows.length} named saves, ${totalVisits} total visits across ${allDates.length} days.`,
+    summary: `The Knot activity log from ${periodStart ?? "?"} to ${periodEnd ?? "?"}. ${inquiryRows.length} named inquiries, ${saveLeads.length} named saves, ${visitLeads.length} named storefront visits across ${allDates.length} days.`,
     totalAnomalies: 0,
     blockers: 0,
   };
@@ -808,7 +845,7 @@ export const captureRouter = router({
         rows: z.array(
           z.object({
             id: z.string(),
-            type: z.enum(["client", "inquiry", "vendor", "review", "metric", "spend", "unknown"]),
+            type: z.enum(["client", "inquiry", "vendor", "review", "metric", "spend", "lead", "unknown"]),
             skip: z.boolean().default(false),
             mapped: z.record(z.string().nullable()),
             anomalyAnswers: z.record(z.string()), // anomaly.id -> answer
@@ -1001,6 +1038,23 @@ export const captureRouter = router({
               } else {
                 results.errors.push(`Spend (${row.mapped.spend_platform}): ${error.message}`);
               }
+            } else {
+              results.inserted++;
+            }
+          } else if (row.type === "lead") {
+            // Pre-inquiry funnel touch — save, storefront visit, website visit, etc.
+            const { error } = await ctx.supabase.from("leads").insert({
+              venue_id: ctx.venueId,
+              platform: (row.mapped.lead_platform ?? "unknown").toLowerCase().replace(/\s+/g, "_"),
+              touch_type: row.mapped.lead_touch_type ?? "storefront_visit",
+              name: row.mapped.lead_name ?? null,
+              source_date: row.mapped.lead_source_date ?? null,
+              raw_activity: row.mapped.lead_raw_activity ?? null,
+              source: "capture_upload",
+            });
+
+            if (error) {
+              results.errors.push(`Lead (${row.mapped.lead_name ?? "unknown"}): ${error.message}`);
             } else {
               results.inserted++;
             }

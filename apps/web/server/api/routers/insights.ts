@@ -967,4 +967,202 @@ ${JSON.stringify(context, null, 2)}`;
 
       return { answer, context };
     }),
+
+  // Full journey timeline for a person — leads → inquiry → tour → client
+  getJourney: venueProcedure
+    .input(z.object({
+      name: z.string().optional(),
+      inquiryId: z.string().uuid().optional(),
+      clientId: z.string().uuid().optional(),
+    }))
+    .query(async ({ ctx, input }) => {
+      const { name, inquiryId, clientId } = input;
+
+      // Resolve to a canonical name to search with
+      let searchName = name ?? null;
+      let resolvedInquiry: any = null;
+      let resolvedClient: any = null;
+
+      if (inquiryId) {
+        const { data } = await ctx.supabase
+          .from("inquiries")
+          .select("*")
+          .eq("id", inquiryId)
+          .eq("venue_id", ctx.venueId)
+          .single();
+        resolvedInquiry = data;
+        if (data?.name_extracted && !searchName) searchName = data.name_extracted;
+      }
+
+      if (clientId) {
+        const { data } = await ctx.supabase
+          .from("clients")
+          .select("*")
+          .eq("id", clientId)
+          .eq("venue_id", ctx.venueId)
+          .single();
+        resolvedClient = data;
+        if (data?.name_primary && !searchName) searchName = data.name_primary;
+      }
+
+      if (!searchName && !inquiryId && !clientId) {
+        return { events: [], summary: "No search criteria provided." };
+      }
+
+      // Fetch all matching records in parallel
+      const firstName = searchName
+        ? searchName.trim().split(/\s+/)[0].toLowerCase()
+        : null;
+
+      const [leadsRes, inquiriesRes, clientsRes] = await Promise.all([
+        // Leads: pre-inquiry funnel touches
+        firstName
+          ? ctx.supabase
+              .from("leads")
+              .select("*")
+              .eq("venue_id", ctx.venueId)
+              .ilike("name", `${firstName}%`)
+              .order("source_date", { ascending: true })
+          : { data: [] },
+
+        // Inquiries: either the resolved one or name-matched
+        inquiryId
+          ? { data: resolvedInquiry ? [resolvedInquiry] : [] }
+          : firstName
+          ? ctx.supabase
+              .from("inquiries")
+              .select("*")
+              .eq("venue_id", ctx.venueId)
+              .ilike("name_extracted", `${firstName}%`)
+              .order("received_at", { ascending: true })
+          : { data: [] },
+
+        // Clients
+        clientId
+          ? { data: resolvedClient ? [resolvedClient] : [] }
+          : firstName
+          ? ctx.supabase
+              .from("clients")
+              .select("*")
+              .eq("venue_id", ctx.venueId)
+              .ilike("name_primary", `${firstName}%`)
+              .order("event_date", { ascending: true })
+          : { data: [] },
+      ]);
+
+      type JourneyEvent = {
+        id: string;
+        stage: "lead" | "inquiry" | "tour" | "booked" | "event_complete";
+        date: string | null;
+        label: string;
+        platform: string | null;
+        detail: string | null;
+        sourceTable: "leads" | "inquiries" | "clients";
+        sourceId: string;
+      };
+
+      const events: JourneyEvent[] = [];
+
+      // Leads → funnel touches
+      for (const lead of (leadsRes.data ?? []) as any[]) {
+        const touchLabel: Record<string, string> = {
+          save: "Saved storefront",
+          storefront_visit: "Visited storefront",
+          website_visit: "Clicked through to website",
+          link_click: "Clicked a link",
+          social_follow: "Followed on social",
+          social_dm: "Sent a DM",
+          call: "Called",
+          form_visit: "Visited contact form",
+        };
+        events.push({
+          id: lead.id,
+          stage: "lead",
+          date: lead.source_date,
+          label: touchLabel[lead.touch_type] ?? lead.touch_type,
+          platform: lead.platform,
+          detail: lead.raw_activity ?? null,
+          sourceTable: "leads",
+          sourceId: lead.id,
+        });
+      }
+
+      // Inquiries
+      for (const inq of (inquiriesRes.data ?? []) as any[]) {
+        events.push({
+          id: inq.id,
+          stage: "inquiry",
+          date: inq.received_at ? new Date(inq.received_at).toISOString().split("T")[0] : null,
+          label: "Sent inquiry",
+          platform: inq.platform ?? null,
+          detail: inq.raw_message
+            ? inq.raw_message.slice(0, 200)
+            : inq.event_date_extracted
+            ? `Event date: ${inq.event_date_extracted}`
+            : null,
+          sourceTable: "inquiries",
+          sourceId: inq.id,
+        });
+      }
+
+      // Clients — may represent tour booked, booked, or complete
+      for (const client of (clientsRes.data ?? []) as any[]) {
+        const stageMap: Record<string, JourneyEvent["stage"]> = {
+          inquiry: "inquiry",
+          touring: "tour",
+          hold: "tour",
+          contracted: "booked",
+          event_complete: "event_complete",
+        };
+        const stage = stageMap[client.status] ?? "booked";
+        events.push({
+          id: client.id,
+          stage,
+          date: client.event_date ?? null,
+          label: stage === "event_complete"
+            ? "Wedding held"
+            : stage === "booked"
+            ? "Contracted / booked"
+            : stage === "tour"
+            ? "Touring / on hold"
+            : "Client record",
+          platform: client.first_touch_platform ?? null,
+          detail: [
+            client.package ? `Package: ${client.package}` : null,
+            client.revenue_cents ? `Revenue: $${(client.revenue_cents / 100).toLocaleString()}` : null,
+            client.guest_count_final ? `Guests: ${client.guest_count_final}` : null,
+          ].filter(Boolean).join(" · ") || null,
+          sourceTable: "clients",
+          sourceId: client.id,
+        });
+      }
+
+      // Sort by date ascending (nulls last)
+      events.sort((a, b) => {
+        if (!a.date && !b.date) return 0;
+        if (!a.date) return 1;
+        if (!b.date) return -1;
+        return a.date.localeCompare(b.date);
+      });
+
+      // Build a plain-English summary
+      const stageOrder = ["lead", "inquiry", "tour", "booked", "event_complete"];
+      const latestStage = events.reduce((best, e) => {
+        return stageOrder.indexOf(e.stage) > stageOrder.indexOf(best) ? e.stage : best;
+      }, "lead" as string);
+
+      const stageSummary: Record<string, string> = {
+        lead: "still in the pre-inquiry funnel",
+        inquiry: "has inquired but not yet toured",
+        tour: "is actively touring / on hold",
+        booked: "is contracted and booked",
+        event_complete: "has had their wedding here",
+      };
+
+      const summary = events.length === 0
+        ? `No journey data found for "${searchName}".`
+        : `${searchName ?? "This person"} ${stageSummary[latestStage] ?? "is in the system"}. ${events.length} recorded touchpoint${events.length === 1 ? "" : "s"} across ${[...new Set(events.map(e => e.sourceTable))].join(", ")}.`;
+
+      return { events, summary, searchName };
+    }),
 });
