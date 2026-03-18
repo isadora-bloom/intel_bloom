@@ -144,7 +144,13 @@ export async function ingestTrendsForGeo(
 
 export async function ingestTrendsAllVenues(log: string[] = []): Promise<void> {
   const apiKey = process.env.SERPAPI_KEY;
-  if (!apiKey) { log.push("SERPAPI_KEY not set"); return; }
+  if (!apiKey) {
+    log.push(
+      "SERPAPI_KEY not set. Trends data must be seeded manually using the Python script: " +
+      "python scripts/ingest-trends.py"
+    );
+    return;
+  }
 
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
