@@ -182,7 +182,7 @@ export const analyticsRouter = router({
                 .order("year").order("month");
             }),
 
-          // Google Trends search interest
+          // Google Trends — all tracked terms
           ctx.supabase
             .from("venues")
             .select("google_trends_metro")
@@ -194,7 +194,11 @@ export const analyticsRouter = router({
                 .from("macro_search_trends")
                 .select("week_start, term, relative_interest")
                 .eq("geo", v.google_trends_metro)
-                .in("term", ["wedding venue", "wedding venues"])
+                .in("term", [
+                  "wedding venue", "wedding venues",
+                  "engagement ring", "how to propose",
+                  "divorce lawyer",
+                ])
                 .gte("week_start", fromIso)
                 .order("week_start");
             }),
@@ -239,59 +243,140 @@ export const analyticsRouter = router({
         }
       }
 
-      // Weather monthly averages
-      const weatherByMonth: { avgTemp: number | null; avgPrecip: number | null; avgScore: number | null }[] =
-        Array(12).fill(null).map(() => ({ avgTemp: null, avgPrecip: null, avgScore: null }));
-      const weatherAcc: { temp: number[]; precip: number[]; score: number[] }[] =
-        Array(12).fill(null).map(() => ({ temp: [], precip: [], score: [] }));
-
-      for (const w of (weatherRes as any).data ?? []) {
-        const m = (w.month as number) - 1;
-        if (m >= 0 && m < 12) {
-          if (w.temp_avg_f != null) weatherAcc[m].temp.push(w.temp_avg_f);
-          if (w.precipitation_inches != null) weatherAcc[m].precip.push(w.precipitation_inches);
-          if (w.weather_score != null) weatherAcc[m].score.push(w.weather_score);
-        }
+      // Score helpers — computed from raw readings, not stored weather_score
+      function rainScore(precipInches: number): number {
+        // 0 = very dry (<0.5"), 10 = extremely wet (5"+)
+        return Math.min(10, Math.round(precipInches * 2));
       }
-      for (let m = 0; m < 12; m++) {
-        const acc = weatherAcc[m];
-        const mean = (arr: number[]) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
-        weatherByMonth[m] = {
-          avgTemp: acc.temp.length ? Math.round(mean(acc.temp)!) : null,
-          avgPrecip: acc.precip.length ? Math.round(mean(acc.precip)! * 10) / 10 : null,
-          avgScore: acc.score.length ? Math.round(mean(acc.score)!) : null,
+      function heatScore(tempAvgF: number): number {
+        // 0 = ideal for outdoor events (65–78°F), rises toward hot or cold extremes
+        if (tempAvgF >= 65 && tempAvgF <= 78) return 0;
+        if (tempAvgF < 65) return Math.min(10, Math.round((65 - tempAvgF) / 4));
+        return Math.min(10, Math.round((tempAvgF - 78) / 2.5));
+      }
+      function linearTrend(vals: (number | null)[]): "rising" | "falling" | "stable" | null {
+        const pts = vals.map((v, i) => ({ x: i, y: v })).filter(p => p.y !== null) as { x: number; y: number }[];
+        if (pts.length < 3) return null;
+        const n = pts.length;
+        const sumX = pts.reduce((a, p) => a + p.x, 0);
+        const sumY = pts.reduce((a, p) => a + p.y, 0);
+        const sumXY = pts.reduce((a, p) => a + p.x * p.y, 0);
+        const sumX2 = pts.reduce((a, p) => a + p.x * p.x, 0);
+        const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
+        if (slope > 0.3) return "rising";
+        if (slope < -0.3) return "falling";
+        return "stable";
+      }
+
+      // Build year×month lookup from raw weather rows
+      const allWeatherRows: any[] = (weatherRes as any).data ?? [];
+      const years = [...new Set(allWeatherRows.map((w: any) => w.year as number))].sort();
+
+      // weatherGrid[monthIndex] = { label, years: [{year, heatScore, rainScore, tempAvg, precip}], rainTrend, heatTrend }
+      const mean = (arr: number[]) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+
+      const weatherByMonth: { avgTemp: number | null; avgPrecip: number | null; avgHeatScore: number | null; avgRainScore: number | null }[] =
+        Array(12).fill(null).map(() => ({ avgTemp: null, avgPrecip: null, avgHeatScore: null, avgRainScore: null }));
+
+      const weatherGrid = Array(12).fill(null).map((_, mi) => {
+        const monthRows = allWeatherRows.filter((w: any) => (w.month as number) - 1 === mi);
+        const byYear = years.map(yr => {
+          const row = monthRows.find((w: any) => w.year === yr);
+          const temp = row?.temp_avg_f ?? null;
+          const precip = row?.precipitation_inches ?? null;
+          return {
+            year: yr,
+            tempAvg: temp !== null ? Math.round(temp) : null,
+            precip: precip !== null ? Math.round(precip * 10) / 10 : null,
+            heatScore: temp !== null ? heatScore(temp) : null,
+            rainScore: precip !== null ? rainScore(precip) : null,
+          };
+        });
+
+        const heatScores = byYear.map(y => y.heatScore).filter((v): v is number => v !== null);
+        const rainScores = byYear.map(y => y.rainScore).filter((v): v is number => v !== null);
+        const temps = byYear.map(y => y.tempAvg).filter((v): v is number => v !== null);
+        const precips = byYear.map(y => y.precip).filter((v): v is number => v !== null);
+
+        weatherByMonth[mi] = {
+          avgTemp: temps.length ? Math.round(mean(temps)!) : null,
+          avgPrecip: precips.length ? Math.round(mean(precips)! * 10) / 10 : null,
+          avgHeatScore: heatScores.length ? Math.round(mean(heatScores)!) : null,
+          avgRainScore: rainScores.length ? Math.round(mean(rainScores)!) : null,
         };
+
+        return {
+          monthNum: mi + 1,
+          month: MONTHS[mi],
+          years: byYear,
+          rainTrend: linearTrend(byYear.map(y => y.rainScore)),
+          heatTrend: linearTrend(byYear.map(y => y.heatScore)),
+        };
+      });
+
+      // Search trends: split by category, average by month across all years
+      const VENUE_TERMS = ["wedding venue", "wedding venues"];
+      const ENGAGEMENT_TERMS = ["engagement ring", "how to propose"];
+      const DIVORCE_TERMS = ["divorce lawyer"];
+
+      function avgTrendsByMonth(terms: string[]): (number | null)[] {
+        const acc: number[][] = Array(12).fill(null).map(() => []);
+        for (const t of (trendsRes as any).data ?? []) {
+          if (!terms.includes(t.term)) continue;
+          const m = new Date(t.week_start).getMonth();
+          if (m >= 0 && m < 12 && t.relative_interest != null) acc[m].push(t.relative_interest);
+        }
+        return acc.map(a => a.length ? Math.round(a.reduce((x, y) => x + y, 0) / a.length) : null);
       }
 
-      // Search trends: group by ISO week → extract month, average by month
-      const trendsByMonth: (number | null)[] = Array(12).fill(null);
-      const trendAcc: number[][] = Array(12).fill(null).map(() => []);
-      for (const t of (trendsRes as any).data ?? []) {
-        const m = new Date(t.week_start).getMonth();
-        if (m >= 0 && m < 12 && t.relative_interest != null) {
-          trendAcc[m].push(t.relative_interest);
+      // YoY: current calendar year vs prior calendar year, count by month
+      const currentYear = new Date().getFullYear();
+      const priorYear = currentYear - 1;
+      function countByMonthYear(dates: (string | null)[], year: number): number[] {
+        const counts = Array(12).fill(0);
+        for (const d of dates) {
+          if (!d) continue;
+          const dt = new Date(d);
+          if (dt.getFullYear() === year) counts[dt.getMonth()]++;
         }
+        return counts;
       }
-      for (let m = 0; m < 12; m++) {
-        if (trendAcc[m].length > 0) {
-          trendsByMonth[m] = Math.round(
-            trendAcc[m].reduce((a, b) => a + b, 0) / trendAcc[m].length
-          );
-        }
-      }
+      const savesThisYear  = countByMonthYear((savesRes.data ?? []).map((r: any) => r.source_date), currentYear);
+      const savesLastYear  = countByMonthYear((savesRes.data ?? []).map((r: any) => r.source_date), priorYear);
+      const inqThisYear    = countByMonthYear((inquiriesRes.data ?? []).map((r: any) => r.received_at), currentYear);
+      const inqLastYear    = countByMonthYear((inquiriesRes.data ?? []).map((r: any) => r.received_at), priorYear);
 
-      return MONTHS.map((label, m) => ({
-        month: label,
-        monthNum: m + 1,
-        saves: savesByMonth[m],
-        inquiries: inquiriesByMonth[m],
-        tours: toursByMonth[m],
-        events: eventsByMonth[m],
-        booked: bookedByMonth[m],
-        contractedAt: contractedByMonth[m],
-        weather: weatherByMonth[m],
-        searchTrend: trendsByMonth[m],
-      }));
+      const trendsByMonth      = avgTrendsByMonth(VENUE_TERMS);
+      const engagementByMonth  = avgTrendsByMonth(ENGAGEMENT_TERMS);
+      const divorceByMonth     = avgTrendsByMonth(DIVORCE_TERMS);
+
+      return {
+        months: MONTHS.map((label, m) => ({
+          month: label,
+          monthNum: m + 1,
+          saves: savesByMonth[m],
+          inquiries: inquiriesByMonth[m],
+          tours: toursByMonth[m],
+          events: eventsByMonth[m],
+          booked: bookedByMonth[m],
+          contractedAt: contractedByMonth[m],
+          weather: weatherByMonth[m],
+          searchTrend: trendsByMonth[m],
+          engagementTrend: engagementByMonth[m],
+          divorceTrend: divorceByMonth[m],
+          // YoY for current vs prior calendar year
+          yoy: {
+            savesThis: savesThisYear[m],
+            savesLast: savesLastYear[m],
+            inqThis: inqThisYear[m],
+            inqLast: inqLastYear[m],
+          },
+        })),
+        weatherGrid,
+        weatherYears: years,
+        currentYear,
+        priorYear,
+      };
     }),
 
   // Stage pipeline — current snapshot of how many records sit at each stage

@@ -3,15 +3,126 @@
 import { trpc } from "@/lib/trpc/client";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  LineChart, Line, Legend, ComposedChart, Area,
+  LineChart, Line, Legend,
 } from "recharts";
 
+// Rain score cell: light blue (dry) → deep blue (very wet)
+function rainCellColor(score: number | null): string {
+  if (score === null) return "#f3f4f6";
+  const stops = ["#eff6ff","#dbeafe","#bfdbfe","#93c5fd","#60a5fa","#3b82f6","#2563eb","#1d4ed8","#1e40af","#1e3a8a","#172554"];
+  return stops[Math.min(10, Math.max(0, score))];
+}
+
+// Heat score cell: green (ideal) → amber → red (extreme)
+function heatCellColor(score: number | null): string {
+  if (score === null) return "#f3f4f6";
+  const stops = ["#f0fdf4","#dcfce7","#bbf7d0","#86efac","#fde68a","#fbbf24","#f97316","#ef4444","#dc2626","#b91c1c","#7f1d1d"];
+  return stops[Math.min(10, Math.max(0, score))];
+}
+
+const TREND_LABEL: Record<string, { arrow: string; color: string; title: string }> = {
+  rising:  { arrow: "↑", color: "text-red-500",   title: "Getting worse over the recorded years" },
+  falling: { arrow: "↓", color: "text-green-600",  title: "Improving over the recorded years" },
+  stable:  { arrow: "→", color: "text-gray-400",   title: "No clear trend" },
+};
+
+function WeatherHeatmap({
+  label, scoreKey, subtitle, lowLabel, highLabel, cellColor, grid, years, trendKey, tooltipFn,
+}: {
+  label: string;
+  scoreKey: "rainScore" | "heatScore";
+  subtitle: string;
+  lowLabel: string;
+  highLabel: string;
+  cellColor: (score: number | null) => string;
+  grid: any[];
+  years: number[];
+  trendKey: "rainTrend" | "heatTrend";
+  tooltipFn: (yearRow: any) => string | null;
+}) {
+  return (
+    <div>
+      <div className="flex items-baseline gap-2 mb-1">
+        <p className="text-xs font-medium text-gray-700">{label}</p>
+        <p className="text-xs text-gray-400">{subtitle}</p>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="text-xs border-separate border-spacing-0.5">
+          <thead>
+            <tr>
+              <th className="text-left pr-2 pb-1 font-normal text-gray-400 w-8">Year</th>
+              {grid.map((g) => (
+                <th key={g.monthNum} className="text-center pb-1 font-normal text-gray-500 w-9">
+                  {g.month}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {years.map((yr) => (
+              <tr key={yr}>
+                <td className="pr-2 text-gray-400 font-normal text-right">{yr}</td>
+                {grid.map((g) => {
+                  const yrRow = g.years.find((y: any) => y.year === yr);
+                  const score = yrRow?.[scoreKey] ?? null;
+                  const tip = yrRow ? tooltipFn(yrRow) : null;
+                  return (
+                    <td
+                      key={g.monthNum}
+                      title={tip ? `${g.month} ${yr}: score ${score} (${tip})` : `${g.month} ${yr}: no data`}
+                      className="rounded w-9 h-7 text-center align-middle"
+                      style={{ backgroundColor: cellColor(score) }}
+                    >
+                      {score !== null ? (
+                        <span className={`text-[10px] font-medium ${score >= 6 ? "text-white" : "text-gray-700"}`}>{score}</span>
+                      ) : (
+                        <span className="text-[10px] text-gray-300">—</span>
+                      )}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+            {/* Trend row */}
+            <tr>
+              <td className="pr-2 text-gray-400 text-right pt-1">trend</td>
+              {grid.map((g) => {
+                const t = g[trendKey] as string | null;
+                const info = t ? TREND_LABEL[t] : null;
+                return (
+                  <td key={g.monthNum} className="text-center pt-1" title={info?.title}>
+                    {info ? (
+                      <span className={`text-sm font-bold ${info.color}`}>{info.arrow}</span>
+                    ) : (
+                      <span className="text-xs text-gray-200">—</span>
+                    )}
+                  </td>
+                );
+              })}
+            </tr>
+          </tbody>
+        </table>
+        {/* Legend */}
+        <div className="flex items-center gap-2 mt-2">
+          <span className="text-[10px] text-gray-400">{lowLabel}</span>
+          {[0,1,2,3,4,5,6,7,8,9,10].map(s => (
+            <div key={s} className="w-4 h-3 rounded-sm" style={{ backgroundColor: cellColor(s) }} />
+          ))}
+          <span className="text-[10px] text-gray-400">{highLabel}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const STAGE_COLORS = {
-  saves:      "#94a3b8",  // slate — discovery / passive
-  inquiries:  "#60a5fa",  // blue — active consideration
-  tours:      "#f59e0b",  // amber — serious intent
-  events:     "#10b981",  // green — booked / held wedding
-  searchTrend:"#c084fc",  // purple — search interest
+  saves:           "#94a3b8",  // slate — discovery / passive
+  inquiries:       "#60a5fa",  // blue — active consideration
+  tours:           "#f59e0b",  // amber — serious intent
+  events:          "#10b981",  // green — booked / held wedding
+  searchTrend:     "#c084fc",  // purple — wedding venue search interest
+  engagementTrend: "#f43f5e",  // rose — engagement ring searches (leading indicator)
+  divorceTrend:    "#64748b",  // slate-500 — divorce searches (confidence dampener)
 };
 
 function pct(n: number | null) {
@@ -31,8 +142,12 @@ export default function AnalyticsPage() {
   const { data: funnel }       = trpc.analytics.funnelSeasonality.useQuery({ years: 3 });
   const { data: pipeline }     = trpc.analytics.stagePipeline.useQuery();
 
-  const hasFunnelData = funnel && funnel.some(
+  const funnelMonths = funnel?.months ?? [];
+  const hasFunnelData = funnelMonths.some(
     (m) => m.saves > 0 || m.inquiries > 0 || m.tours > 0 || m.events > 0
+  );
+  const hasWeatherData = (funnel?.weatherGrid ?? []).some(g =>
+    g.years.some((y: any) => y.rainScore !== null || y.heatScore !== null)
   );
 
   return (
@@ -120,7 +235,7 @@ export default function AnalyticsPage() {
           <div className="space-y-6">
             {/* Main multi-stage line chart */}
             <ResponsiveContainer width="100%" height={240}>
-              <LineChart data={funnel} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+              <LineChart data={funnelMonths} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
                 <XAxis dataKey="month" tick={{ fontSize: 11 }} />
                 <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
                 <Tooltip />
@@ -129,61 +244,71 @@ export default function AnalyticsPage() {
                 <Line type="monotone" dataKey="inquiries" name="Inquiries"         stroke={STAGE_COLORS.inquiries}  strokeWidth={2} dot={false} />
                 <Line type="monotone" dataKey="tours"     name="Tours completed"   stroke={STAGE_COLORS.tours}      strokeWidth={2} dot={false} />
                 <Line type="monotone" dataKey="events"    name="Events held"       stroke={STAGE_COLORS.events}     strokeWidth={2} dot={false} />
-                {funnel.some((m) => m.searchTrend !== null) && (
-                  <Line type="monotone" dataKey="searchTrend" name="Search interest" stroke={STAGE_COLORS.searchTrend} strokeWidth={1.5} strokeDasharray="4 2" dot={false} />
+                {funnelMonths.some((m) => m.searchTrend !== null) && (
+                  <Line type="monotone" dataKey="searchTrend" name="Venue searches" stroke={STAGE_COLORS.searchTrend} strokeWidth={1.5} strokeDasharray="4 2" dot={false} />
+                )}
+                {funnelMonths.some((m) => m.engagementTrend !== null) && (
+                  <Line type="monotone" dataKey="engagementTrend" name="Engagement ring searches ↑ pipeline" stroke={STAGE_COLORS.engagementTrend} strokeWidth={1.5} strokeDasharray="2 3" dot={false} />
+                )}
+                {funnelMonths.some((m) => m.divorceTrend !== null) && (
+                  <Line type="monotone" dataKey="divorceTrend" name="Divorce searches ↓ confidence" stroke={STAGE_COLORS.divorceTrend} strokeWidth={1} strokeDasharray="1 4" dot={false} />
                 )}
               </LineChart>
             </ResponsiveContainer>
 
-            {/* Weather overlay */}
-            {funnel.some((m) => m.weather.avgTemp !== null) && (
-              <div>
-                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Weather by month (avg)</p>
-                <ResponsiveContainer width="100%" height={100}>
-                  <ComposedChart data={funnel} margin={{ top: 0, right: 8, bottom: 0, left: 0 }}>
-                    <XAxis dataKey="month" tick={{ fontSize: 10 }} />
-                    <YAxis yAxisId="temp" domain={[20, 90]} tick={{ fontSize: 10 }} unit="°F" width={34} />
-                    <YAxis yAxisId="precip" orientation="right" domain={[0, 6]} tick={{ fontSize: 10 }} unit="in" width={28} />
-                    <Tooltip formatter={(v: any, name: string) => name === "Precip" ? `${v}in` : `${v}°F`} />
-                    <Area yAxisId="precip" type="monotone" dataKey="weather.avgPrecip" name="Precip" fill="#bfdbfe" stroke="#93c5fd" strokeWidth={0} />
-                    <Line yAxisId="temp" type="monotone" dataKey="weather.avgTemp" name="Avg temp" stroke="#f97316" strokeWidth={2} dot={false} />
-                  </ComposedChart>
-                </ResponsiveContainer>
-                <p className="text-xs text-gray-400 mt-1">
-                  Blue fill = precipitation. Orange = avg temperature. Events cluster where weather is best.
-                  Discovery often spikes when weather is poor (people browse indoors).
-                </p>
-              </div>
-            )}
-
-            {/* Stage interpretation table */}
+            {/* Stage interpretation table with YoY */}
             <div className="overflow-x-auto">
+              <p className="text-xs text-gray-400 mb-1">
+                YoY = {funnel?.currentYear ?? "this year"} vs {funnel?.priorYear ?? "last year"} (same month).
+                <span className="text-green-600 ml-1">Green = up</span>, <span className="text-red-500 ml-1">red = down</span>.
+              </p>
               <table className="w-full text-xs">
                 <thead>
                   <tr className="text-gray-400 border-b border-gray-100">
                     <th className="text-left py-1.5 pr-3 font-medium">Month</th>
                     <th className="text-right py-1.5 pr-3">Saves</th>
+                    <th className="text-right py-1.5 pr-2 text-gray-300">vs LY</th>
                     <th className="text-right py-1.5 pr-3">Inquiries</th>
+                    <th className="text-right py-1.5 pr-2 text-gray-300">vs LY</th>
                     <th className="text-right py-1.5 pr-3">Tours</th>
                     <th className="text-right py-1.5 pr-3">Events</th>
                     <th className="text-right py-1.5 pr-3">Avg temp</th>
-                    <th className="text-right py-1.5">Search</th>
+                    <th className="text-right py-1.5 pr-3" title="Venue search interest">Venue</th>
+                    <th className="text-right py-1.5 pr-3" title="Engagement ring searches — leading indicator">Ring 💍</th>
+                    <th className="text-right py-1.5" title="Divorce searches — confidence signal">Divorce</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
-                  {funnel.map((row) => (
-                    <tr key={row.month} className="hover:bg-gray-50">
-                      <td className="py-1.5 pr-3 font-medium text-gray-700">{row.month}</td>
-                      <td className="text-right py-1.5 pr-3 text-gray-600">{row.saves || "—"}</td>
-                      <td className="text-right py-1.5 pr-3 text-gray-600">{row.inquiries || "—"}</td>
-                      <td className="text-right py-1.5 pr-3 text-gray-600">{row.tours || "—"}</td>
-                      <td className="text-right py-1.5 pr-3 text-gray-600">{row.events || "—"}</td>
-                      <td className="text-right py-1.5 pr-3 text-gray-400">
-                        {row.weather.avgTemp !== null ? `${row.weather.avgTemp}°F` : "—"}
-                      </td>
-                      <td className="text-right py-1.5 text-gray-400">{row.searchTrend ?? "—"}</td>
-                    </tr>
-                  ))}
+                  {funnelMonths.map((row) => {
+                    function yoyDelta(curr: number, prev: number) {
+                      if (!prev && !curr) return null;
+                      if (!prev) return null;
+                      const pct = Math.round(((curr - prev) / prev) * 100);
+                      const color = pct > 0 ? "text-green-600" : pct < 0 ? "text-red-500" : "text-gray-400";
+                      return <span className={color}>{pct > 0 ? `+${pct}%` : `${pct}%`}</span>;
+                    }
+                    return (
+                      <tr key={row.month} className="hover:bg-gray-50">
+                        <td className="py-1.5 pr-3 font-medium text-gray-700">{row.month}</td>
+                        <td className="text-right py-1.5 pr-3 text-gray-600">{row.yoy.savesThis || "—"}</td>
+                        <td className="text-right py-1.5 pr-2 text-gray-400">
+                          {yoyDelta(row.yoy.savesThis, row.yoy.savesLast) ?? "—"}
+                        </td>
+                        <td className="text-right py-1.5 pr-3 text-gray-600">{row.yoy.inqThis || "—"}</td>
+                        <td className="text-right py-1.5 pr-2 text-gray-400">
+                          {yoyDelta(row.yoy.inqThis, row.yoy.inqLast) ?? "—"}
+                        </td>
+                        <td className="text-right py-1.5 pr-3 text-gray-600">{row.tours || "—"}</td>
+                        <td className="text-right py-1.5 pr-3 text-gray-600">{row.events || "—"}</td>
+                        <td className="text-right py-1.5 pr-3 text-gray-400">
+                          {row.weather.avgTemp !== null ? `${row.weather.avgTemp}°F` : "—"}
+                        </td>
+                        <td className="text-right py-1.5 pr-3 text-gray-400">{row.searchTrend ?? "—"}</td>
+                        <td className="text-right py-1.5 pr-3 text-rose-400">{row.engagementTrend ?? "—"}</td>
+                        <td className="text-right py-1.5 text-slate-400">{row.divorceTrend ?? "—"}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -196,6 +321,44 @@ export default function AnalyticsPage() {
           </div>
         )}
       </div>
+
+      {/* ── WEATHER HEATMAPS ── */}
+      {hasWeatherData && (
+        <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-6">
+          <div>
+            <h2 className="text-base font-semibold text-gray-900 mb-1">Weather risk by month</h2>
+            <p className="text-xs text-gray-400">
+              Each cell = one year. Darker = higher risk. Trend arrows show whether risk is rising or falling over the recorded years.
+            </p>
+          </div>
+
+          <WeatherHeatmap
+            label="Rain risk"
+            scoreKey="rainScore"
+            subtitle="How wet each month has been. Higher score = more precipitation."
+            lowLabel="Dry"
+            highLabel="Very wet"
+            cellColor={rainCellColor}
+            grid={funnel!.weatherGrid}
+            years={funnel!.weatherYears}
+            trendKey="rainTrend"
+            tooltipFn={(y: any) => y.precip !== null ? `${y.precip}"` : null}
+          />
+
+          <WeatherHeatmap
+            label="Temperature discomfort"
+            scoreKey="heatScore"
+            subtitle="How uncomfortable the temperature is for an outdoor event. 0 = ideal (65–78°F). Rises toward freezing or sweltering."
+            lowLabel="Ideal"
+            highLabel="Extreme"
+            cellColor={heatCellColor}
+            grid={funnel!.weatherGrid}
+            years={funnel!.weatherYears}
+            trendKey="heatTrend"
+            tooltipFn={(y: any) => y.tempAvg !== null ? `${y.tempAvg}°F avg` : null}
+          />
+        </div>
+      )}
 
       {/* ── SOURCE ROI ── */}
       <div className="bg-white rounded-lg border border-gray-200 p-6">

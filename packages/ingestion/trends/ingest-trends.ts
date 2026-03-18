@@ -26,11 +26,19 @@ import { createClient } from "@supabase/supabase-js";
 const SERPAPI_BASE = "https://serpapi.com/search.json";
 
 const WEDDING_TERMS = [
+  // Wedding market demand
   "wedding venue",
   "wedding venues",
   "barn wedding venue",
   "outdoor wedding venue",
-  "wedding photographer",   // proxy for overall market engagement
+  "wedding photographer",
+
+  // Engagement pipeline — leading indicator (proposals → venue searches 3-12mo later)
+  "engagement ring",
+  "how to propose",
+
+  // Confidence signals — lagging/dampener (friend divorces shake intent)
+  "divorce lawyer",
 ];
 
 function sleep(ms: number) {

@@ -53,11 +53,19 @@ if not SUPABASE_URL or not SUPABASE_KEY:
     sys.exit(1)
 
 WEDDING_TERMS = [
+    # Wedding market demand
     "wedding venue",
     "wedding venues",
     "barn wedding venue",
     "outdoor wedding venue",
     "wedding photographer",
+
+    # Engagement pipeline — leading indicator (proposals → venue searches 3-12mo later)
+    "engagement ring",
+    "how to propose",
+
+    # Confidence signals — lagging/dampener (friend divorces shake intent)
+    "divorce lawyer",
 ]
 
 SUPABASE_HEADERS = {
