@@ -17,6 +17,10 @@ import {
   ChevronDown,
   ChevronUp,
   Activity,
+  History,
+  Radio,
+  Telescope,
+  Sparkles,
 } from "lucide-react";
 
 const SENTIMENT_STYLES: Record<
@@ -36,6 +40,14 @@ const TYPE_ICONS: Record<string, React.ElementType> = {
   leading_indicator: Search,
   macro_context: Globe,
   platform_activity: Activity,
+  recommendation: Lightbulb,
+};
+
+const SECTION_META: Record<string, { label: string; icon: React.ElementType; description: string }> = {
+  past:           { label: "What happened",   icon: History,   description: "Patterns from your historical data" },
+  present:        { label: "What's happening now", icon: Radio, description: "Current signals and conditions" },
+  future:         { label: "What to expect",  icon: Telescope, description: "Leading indicators pointing ahead" },
+  recommendation: { label: "Recommendations", icon: Sparkles,  description: "Specific actions based on the signals above" },
 };
 
 const SENTIMENT_TREND_ICONS: Record<string, React.ElementType> = {
@@ -193,27 +205,43 @@ export default function DashboardPage() {
         <p className="text-sm text-gray-500 mt-0.5">Here&apos;s what your data is telling you today.</p>
       </div>
       <AskInsight />
-      <div>
-        <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Intelligence Briefing</h2>
-        {isLoading && (
-          <div className="space-y-3">
-            {[...Array(5)].map((_, i) => (
-              <div key={i} className="bg-white border border-gray-200 rounded-lg p-5 animate-pulse">
-                <div className="h-4 bg-gray-100 rounded w-3/4 mb-3" />
-                <div className="h-3 bg-gray-100 rounded w-full mb-2" />
-                <div className="h-3 bg-gray-100 rounded w-2/3" />
+
+      {isLoading && (
+        <div className="space-y-3">
+          {[...Array(5)].map((_, i) => (
+            <div key={i} className="bg-white border border-gray-200 rounded-lg p-5 animate-pulse">
+              <div className="h-4 bg-gray-100 rounded w-3/4 mb-3" />
+              <div className="h-3 bg-gray-100 rounded w-full mb-2" />
+              <div className="h-3 bg-gray-100 rounded w-2/3" />
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!isLoading && insights && (
+        <div className="space-y-8">
+          {(["past", "present", "future", "recommendation"] as const).map((tf) => {
+            const section = insights.filter(i => i.timeframe === tf && i.dataAvailable);
+            if (!section.length) return null;
+            const meta = SECTION_META[tf];
+            const Icon = meta.icon;
+            return (
+              <div key={tf}>
+                <div className="flex items-center gap-2 mb-3">
+                  <Icon size={14} className="text-gray-400" />
+                  <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{meta.label}</h2>
+                  <span className="text-xs text-gray-300">— {meta.description}</span>
+                </div>
+                <div className="space-y-3">
+                  {section.map((insight) => (
+                    <InsightCard key={insight.id} insight={insight} />
+                  ))}
+                </div>
               </div>
-            ))}
-          </div>
-        )}
-        {!isLoading && insights && (
-          <div className="space-y-3">
-            {insights.map((insight) => (
-              <InsightCard key={insight.id} insight={insight} />
-            ))}
-          </div>
-        )}
-      </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

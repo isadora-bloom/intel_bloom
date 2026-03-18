@@ -11,7 +11,9 @@ export interface BriefingInsight {
     | "seasonal_pricing"
     | "leading_indicator"
     | "macro_context"
-    | "platform_activity";
+    | "platform_activity"
+    | "recommendation";
+  timeframe: "past" | "present" | "future" | "recommendation";
   headline: string;
   body: string;
   action?: string;
@@ -258,6 +260,7 @@ export const insightsRouter = router({
         insights.push({
           id: "source_performance",
           type: "source_performance",
+          timeframe: "past",
           headline,
           body,
           action: costRows.length === 0 ? "Add spend data in Settings to see cost per booking" : undefined,
@@ -371,6 +374,7 @@ export const insightsRouter = router({
         insights.push({
           id: "platform_activity",
           type: "platform_activity",
+          timeframe: "present",
           headline: platformHeadline,
           body: platformBody,
           supporting: supportingPlatform.slice(0, 6),
@@ -476,6 +480,7 @@ export const insightsRouter = router({
       insights.push({
         id: "weather_explainer",
         type: "weather_explainer",
+          timeframe: "present",
         headline,
         body,
         supporting,
@@ -486,6 +491,7 @@ export const insightsRouter = router({
       insights.push({
         id: "weather_explainer",
         type: "weather_explainer",
+          timeframe: "present",
         headline: "Weather data not yet loaded for your station",
         body: "Once NOAA historical data is ingested for your station, Bloom will automatically explain inquiry volume changes using local weather patterns.",
         supporting: [],
@@ -549,6 +555,7 @@ export const insightsRouter = router({
       insights.push({
         id: "seasonal_pricing",
         type: "seasonal_pricing",
+          timeframe: "past",
         headline,
         body,
         action: highRisk.length > 0 ? `Consider 8–15% lower pricing for ${highRisk.map((m) => m.name).join(", ")} to maintain booking velocity` : undefined,
@@ -560,6 +567,7 @@ export const insightsRouter = router({
       insights.push({
         id: "seasonal_pricing",
         type: "seasonal_pricing",
+          timeframe: "past",
         headline: "Seasonal pricing intelligence needs weather history",
         body: "Once NOAA data loads for your station, Bloom will identify which months carry weather risk and suggest pricing adjustments accordingly.",
         supporting: [],
@@ -617,6 +625,7 @@ export const insightsRouter = router({
         insights.push({
           id: "leading_indicator",
           type: "leading_indicator",
+          timeframe: "future",
           headline,
           body,
           supporting: [
@@ -635,6 +644,7 @@ export const insightsRouter = router({
       insights.push({
         id: "leading_indicator",
         type: "leading_indicator",
+          timeframe: "future",
         headline: "Search trend data not yet loaded for your market",
         body: "Once Google Trends data is pulled for your metro area, Bloom will show you leading indicator signals — like engagement ring search volume — that predict inquiry volume months in advance.",
         supporting: [],
@@ -704,6 +714,7 @@ export const insightsRouter = router({
         insights.push({
           id: "macro_context",
           type: "macro_context",
+          timeframe: "present",
           headline,
           body,
           supporting,
@@ -717,11 +728,104 @@ export const insightsRouter = router({
       insights.push({
         id: "macro_context",
         type: "macro_context",
+          timeframe: "present",
         headline: "Macro signals load once FRED economic data is ingested",
         body: "Consumer confidence, Fed district economic conditions, and wedding industry trends will appear here once the FRED ingestion script has run.",
         supporting: [],
         sentiment: "neutral",
         dataAvailable: false,
+      });
+    }
+
+    // ── RECOMMENDATIONS ───────────────────────────────────────────────────────
+    const leadingInsight  = insights.find(i => i.id === "leading_indicator");
+    const seasonalInsight = insights.find(i => i.id === "seasonal_pricing");
+    const macroInsight    = insights.find(i => i.id === "macro_context");
+    const sourceInsight   = insights.find(i => i.id === "source_performance");
+
+    // Rec 1: pipeline urgency from leading indicator
+    if (leadingInsight?.dataAvailable) {
+      if (leadingInsight.sentiment === "positive") {
+        const futureDate = new Date();
+        futureDate.setMonth(futureDate.getMonth() + 9);
+        const month = futureDate.toLocaleString("default", { month: "long" });
+        insights.push({
+          id: "rec_response_speed",
+          type: "recommendation",
+          timeframe: "recommendation",
+          headline: "Tighten your inquiry response time now",
+          body: `Engagement searches are elevated — a surge of newly-engaged couples will start reaching out around ${month}. Venues that respond within 2 hours convert at 2–3× the rate of those who respond the next day. Review your inquiry workflow before the volume arrives.`,
+          action: "Aim for sub-2hr first response on all new inquiries",
+          supporting: [],
+          sentiment: "positive",
+          dataAvailable: true,
+        });
+      } else if (leadingInsight.sentiment === "caution") {
+        insights.push({
+          id: "rec_pipeline_now",
+          type: "recommendation",
+          timeframe: "recommendation",
+          headline: "Soft demand ahead — work what's already in your pipeline",
+          body: `Search interest is below recent levels, which typically means fewer new inquiries in the coming months. Your best lever right now is converting the couples already talking to you. Review any inquiry that hasn't had a follow-up in 2+ weeks.`,
+          action: "Audit open inquiries — follow up on anyone who's gone quiet",
+          supporting: [],
+          sentiment: "caution",
+          dataAvailable: true,
+        });
+      }
+    }
+
+    // Rec 2: weather-driven pricing
+    if (seasonalInsight?.dataAvailable && seasonalInsight.sentiment === "caution") {
+      const highRiskMonths = seasonalInsight.supporting
+        .filter(s => parseFloat(s.value) >= 5)
+        .map(s => s.label);
+      if (highRiskMonths.length > 0) {
+        const monthList = highRiskMonths.slice(0, 3).join(", ");
+        insights.push({
+          id: "rec_weather_pricing",
+          type: "recommendation",
+          timeframe: "recommendation",
+          headline: `Price ${monthList} to reflect the weather risk`,
+          body: `These months historically score high for rain and temperature discomfort. Couples who experience a rough weather day tend to leave lower reviews even when everything else goes perfectly. A modest price reduction (8–15%) for these dates sets expectations appropriately and keeps booking velocity strong.`,
+          action: `Consider a 10% reduction on ${monthList} or reframe them for intimate/elopement packages`,
+          supporting: seasonalInsight.supporting.filter(s => parseFloat(s.value) >= 5),
+          sentiment: "caution",
+          dataAvailable: true,
+        });
+      }
+    }
+
+    // Rec 3: consumer confidence → reduce friction
+    if (macroInsight?.dataAvailable && macroInsight.sentiment === "caution"
+        && !insights.find(i => i.id === "rec_response_speed" || i.id === "rec_pipeline_now")) {
+      insights.push({
+        id: "rec_macro",
+        type: "recommendation",
+        timeframe: "recommendation",
+        headline: "Confidence is soft — make committing feel easy",
+        body: `When discretionary spending confidence drops, couples don't stop wanting to get married — they become more deliberate. The venues that win in this environment have fast responses, clear pricing, and flexible holds. Review your inquiry-to-tour pipeline for anything that adds unnecessary friction.`,
+        action: "Audit your inquiry-to-tour flow — remove any step that isn't essential",
+        supporting: macroInsight.supporting,
+        sentiment: "caution",
+        dataAvailable: true,
+      });
+    }
+
+    // Rec 4: attribution discipline (if multi-source with cost data)
+    if (sourceInsight?.dataAvailable && sourceInsight.supporting.length >= 2
+        && sourceInsight.supporting.some(s => s.value.includes("$"))
+        && !insights.find(i => i.id.startsWith("rec_"))) {
+      insights.push({
+        id: "rec_attribution",
+        type: "recommendation",
+        timeframe: "recommendation",
+        headline: "Ask every inquiry how they found you — your attribution likely has gaps",
+        body: `Many couples self-report "Google" when they mean "Instagram, then Googled your name, then found you on The Knot." Add "How did you first hear about us?" as the first question in your inquiry form and train your team to probe past the obvious answer. Better attribution data directly improves the ROI calculation above.`,
+        action: "Make source the first question on your inquiry form",
+        supporting: [],
+        sentiment: "neutral",
+        dataAvailable: true,
       });
     }
 
