@@ -10,6 +10,7 @@ import { uploadsRouter } from "./routers/uploads";
 import { vendorsRouter } from "./routers/vendors";
 import { insightsRouter } from "./routers/insights";
 import { captureRouter } from "./routers/capture";
+import { emailRouter } from "./routers/email";
 
 export const appRouter = router({
   venues: venuesRouter,
@@ -23,6 +24,7 @@ export const appRouter = router({
   vendors: vendorsRouter,
   insights: insightsRouter,
   capture: captureRouter,
+  email: emailRouter,
 });
 
 export type AppRouter = typeof appRouter;

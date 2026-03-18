@@ -1,12 +1,20 @@
 "use client";
 
 import { trpc } from "@/lib/trpc/client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { Mail, Check, AlertCircle, Loader2, Link2, X } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 
 export default function SettingsPage() {
   const { data: venue, refetch } = trpc.venues.getCurrent.useQuery();
+  const { data: emailConn, refetch: refetchEmail } = trpc.email.getConnection.useQuery();
   const update = trpc.venues.update.useMutation({ onSuccess: () => refetch() });
+  const disconnect = trpc.email.disconnect.useMutation({ onSuccess: () => refetchEmail() });
+  const scan = trpc.email.scan.useMutation();
+
+  const searchParams = useSearchParams();
   const [saved, setSaved] = useState(false);
+  const [scanResult, setScanResult] = useState<any>(null);
 
   const [form, setForm] = useState({
     honeybookApiKey: "",
@@ -15,6 +23,13 @@ export default function SettingsPage() {
     competitorRadiusMiles: 30,
     contributesToBenchmark: true,
   });
+
+  // Flash success/error from OAuth callback
+  useEffect(() => {
+    if (searchParams.get("email_connected") === "1") {
+      refetchEmail();
+    }
+  }, [searchParams]);
 
   function handleSave() {
     update.mutate({
@@ -28,7 +43,16 @@ export default function SettingsPage() {
     setTimeout(() => setSaved(false), 3000);
   }
 
+  async function handleScan() {
+    const result = await scan.mutateAsync({ maxEmails: 100, daysBack: 365 });
+    setScanResult(result);
+    refetchEmail();
+  }
+
   if (!venue) return <div className="text-sm text-gray-400 p-8">Loading...</div>;
+
+  const connectGmailUrl = `/api/auth/google?venue_id=${venue.id}`;
+  const emailError = searchParams.get("email_error") === "1";
 
   return (
     <div className="max-w-2xl space-y-6">
@@ -61,7 +85,144 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      {/* Integrations */}
+      {/* Gmail connection */}
+      <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <div className="flex items-center gap-2 mb-1">
+          <Mail size={16} className="text-gray-500" />
+          <h2 className="text-base font-semibold text-gray-900">Gmail</h2>
+        </div>
+        <p className="text-sm text-gray-500 mb-4">
+          Connect your venue inbox to automatically extract source attribution and match email
+          senders to your leads, inquiries, and clients.
+        </p>
+
+        {emailError && (
+          <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2 mb-4">
+            <AlertCircle size={14} />
+            Connection failed. Please try again.
+          </div>
+        )}
+
+        {emailConn ? (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />
+                <span className="text-sm text-gray-700">{emailConn.email_address}</span>
+              </div>
+              <button
+                onClick={() => disconnect.mutate()}
+                className="text-xs text-gray-400 hover:text-red-500 transition-colors"
+              >
+                Disconnect
+              </button>
+            </div>
+
+            {emailConn.last_synced_at && (
+              <p className="text-xs text-gray-400">
+                Last scanned {new Date(emailConn.last_synced_at).toLocaleDateString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+              </p>
+            )}
+
+            <button
+              onClick={handleScan}
+              disabled={scan.isPending}
+              className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50"
+            >
+              {scan.isPending ? (
+                <><Loader2 size={14} className="animate-spin" /> Scanning inbox…</>
+              ) : (
+                <><Mail size={14} /> Scan inbox</>
+              )}
+            </button>
+
+            {/* Scan results */}
+            {scanResult && (
+              <div className="space-y-3">
+                <div className="grid grid-cols-3 gap-3">
+                  {[
+                    ["Emails scanned", scanResult.scanned],
+                    ["Wedding emails", scanResult.newWeddingEmails],
+                    ["Source attribution found", scanResult.sourceAttribFound],
+                    ["Auto-linked", scanResult.autoLinked],
+                    ["Pending review", scanResult.pendingReview],
+                  ].map(([label, val]) => (
+                    <div key={label} className="bg-gray-50 rounded p-3">
+                      <p className="text-lg font-semibold text-gray-900">{val}</p>
+                      <p className="text-xs text-gray-500">{label}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {scanResult.extractions?.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Extracted</p>
+                    {scanResult.extractions.map((e: any) => (
+                      <div
+                        key={e.id}
+                        className={`rounded border p-3 text-sm ${
+                          e.matchStatus === "auto_linked"
+                            ? "border-green-200 bg-green-50"
+                            : e.matchStatus === "pending_review"
+                            ? "border-amber-200 bg-amber-50"
+                            : "border-gray-200 bg-white"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="font-medium text-gray-900 truncate">
+                              {e.extractedName ?? e.fromName ?? e.fromEmail}
+                            </p>
+                            <p className="text-xs text-gray-500 truncate">{e.subject}</p>
+                          </div>
+                          <span className={`text-xs px-1.5 py-0.5 rounded flex-shrink-0 ${
+                            e.matchStatus === "auto_linked"
+                              ? "bg-green-100 text-green-700"
+                              : e.matchStatus === "pending_review"
+                              ? "bg-amber-100 text-amber-700"
+                              : "bg-gray-100 text-gray-500"
+                          }`}>
+                            {e.matchStatus === "auto_linked" ? "linked" : e.matchStatus === "pending_review" ? "review" : "new"}
+                          </span>
+                        </div>
+                        {e.extractedSource && (
+                          <p className="text-xs text-blue-700 mt-1.5">
+                            Source: <span className="font-medium">{e.extractedSource}</span>
+                            {e.sourceQuote && (
+                              <span className="text-gray-500"> — "{e.sourceQuote.slice(0, 80)}"</span>
+                            )}
+                          </p>
+                        )}
+                        {e.matchSignals?.length > 0 && (
+                          <p className="text-xs text-gray-400 mt-1">
+                            {e.matchSignals.join(" · ")}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {scanResult.newWeddingEmails === 0 && (
+                  <p className="text-sm text-gray-500">
+                    No new wedding inquiry emails found in the last year.
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        ) : (
+          <a
+            href={connectGmailUrl}
+            className="inline-flex items-center gap-2 border border-gray-300 bg-white text-gray-700 px-4 py-2 rounded text-sm font-medium hover:bg-gray-50 transition-colors"
+          >
+            <Mail size={14} />
+            Connect Gmail
+          </a>
+        )}
+      </div>
+
+      {/* Other integrations */}
       <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-4">
         <h2 className="text-base font-semibold text-gray-900">Integrations</h2>
 
