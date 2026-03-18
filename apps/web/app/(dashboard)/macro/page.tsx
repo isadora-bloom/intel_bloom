@@ -2,18 +2,53 @@
 
 import { trpc } from "@/lib/trpc/client";
 import MarketPulseCard from "@/components/macro/MarketPulseCard";
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
+import {
+  LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  CartesianGrid, Legend,
+} from "recharts";
 import { format } from "date-fns";
 
-export default function MacroPage() {
-  const { data: pulse } = trpc.macro.getMarketPulse.useQuery();
-  const { data: sentiment } = trpc.macro.getConsumerSentiment.useQuery();
-  const { data: searchTrends } = trpc.macro.getSearchTrends.useQuery();
-  const { data: weatherData } = trpc.macro.getWeatherSeasonality.useQuery();
-  const { data: economics } = trpc.macro.getRegionalEconomics.useQuery();
-  const { data: competitors } = trpc.macro.getCompetitors.useQuery();
+function yoyColor(pct: number | null) {
+  if (pct === null) return "text-gray-400";
+  if (pct > 5) return "text-green-600";
+  if (pct < -5) return "text-red-500";
+  return "text-gray-500";
+}
 
-  // Group sentiment by type for chart
+function yoyLabel(pct: number | null) {
+  if (pct === null) return "—";
+  return pct > 0 ? `+${pct}% vs LY` : `${pct}% vs LY`;
+}
+
+// Rain score 0–10
+function rainScore(precip: number): number {
+  return Math.min(10, Math.round(precip * 2));
+}
+// Heat score 0–10 (0 = ideal 65–78°F outdoor event temp)
+function heatScore(tempAvgF: number): number {
+  if (tempAvgF >= 65 && tempAvgF <= 78) return 0;
+  if (tempAvgF < 65) return Math.min(10, Math.round((65 - tempAvgF) / 4));
+  return Math.min(10, Math.round((tempAvgF - 78) / 2.5));
+}
+function rainColor(s: number): string {
+  const stops = ["#eff6ff","#dbeafe","#bfdbfe","#93c5fd","#60a5fa","#3b82f6","#2563eb","#1d4ed8","#1e40af","#1e3a8a","#172554"];
+  return stops[Math.min(10, s)];
+}
+function heatColor(s: number): string {
+  const stops = ["#f0fdf4","#dcfce7","#bbf7d0","#86efac","#fde68a","#fbbf24","#f97316","#ef4444","#dc2626","#b91c1c","#7f1d1d"];
+  return stops[Math.min(10, s)];
+}
+
+const MONTH_LABELS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+export default function MacroPage() {
+  const { data: pulse }      = trpc.macro.getMarketPulse.useQuery();
+  const { data: sentiment }  = trpc.macro.getConsumerSentiment.useQuery();
+  const { data: trends }     = trpc.macro.getSearchTrends.useQuery();
+  const { data: weatherData }= trpc.macro.getWeatherSeasonality.useQuery();
+  const { data: competitors }= trpc.macro.getCompetitors.useQuery();
+
+  // Sentiment chart: last 24 months
   const sentimentChart = (sentiment ?? [])
     .filter((s: any) => s.signal_type === "consumer_sentiment")
     .slice(0, 24)
@@ -23,15 +58,18 @@ export default function MacroPage() {
       value: Number(s.value),
     }));
 
-  // Build monthly weather averages for seasonality display
-  const weatherByMonth = Array.from({ length: 12 }, (_, i) => {
-    const monthData = (weatherData ?? []).filter((w: any) => w.month === i + 1);
-    const avgScore = monthData.length > 0
-      ? monthData.reduce((sum: number, w: any) => sum + (w.weather_score ?? 0), 0) / monthData.length
-      : null;
+  // Weather: compute per-month averages with separate heat + rain scores
+  const weatherByMonth = MONTH_LABELS.map((label, i) => {
+    const rows = (weatherData ?? []).filter((w: any) => w.month === i + 1);
+    if (!rows.length) return { month: label, rainScore: null, heatScore: null, avgTemp: null, avgPrecip: null };
+    const avgTemp  = rows.reduce((s: number, w: any) => s + (w.temp_avg_f ?? 0), 0) / rows.length;
+    const avgPrecip= rows.reduce((s: number, w: any) => s + (w.precipitation_inches ?? 0), 0) / rows.length;
     return {
-      month: ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][i],
-      avgScore: avgScore !== null ? Math.round(avgScore * 10) / 10 : null,
+      month: label,
+      rainScore: rainScore(avgPrecip),
+      heatScore: heatScore(avgTemp),
+      avgTemp: Math.round(avgTemp),
+      avgPrecip: Math.round(avgPrecip * 10) / 10,
     };
   });
 
@@ -41,10 +79,166 @@ export default function MacroPage() {
 
       <MarketPulseCard pulse={pulse as any} />
 
-      {/* Consumer sentiment */}
+      {/* ── GOOGLE TRENDS ── */}
+      {trends && (
+        <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-5">
+          <div>
+            <h2 className="text-base font-semibold text-gray-900 mb-0.5">Search trends — {trends.geo}</h2>
+            <p className="text-xs text-gray-400">
+              Weekly Google Trends data, averaged by month. Engagement ring searches are a leading indicator
+              — proposals in Nov–Jan produce venue inquiries 3–12 months later.
+              Divorce searches are a confidence dampener.
+            </p>
+          </div>
+
+          {/* YoY callouts */}
+          <div className="grid grid-cols-3 gap-4">
+            {[
+              {
+                label: "Venue searches",
+                current: trends.yoy.venueThis,
+                pct: trends.yoy.venuePct,
+                color: "#3b82f6",
+                desc: "\"wedding venue\" interest",
+              },
+              {
+                label: "Engagement searches",
+                current: trends.yoy.engagementThis,
+                pct: trends.yoy.engagementPct,
+                color: "#f43f5e",
+                desc: "\"engagement ring\" + \"how to propose\"",
+              },
+              {
+                label: "Divorce searches",
+                current: trends.yoy.divorceThis,
+                pct: trends.yoy.divorcePct,
+                color: "#64748b",
+                desc: "\"divorce lawyer\" — confidence signal",
+              },
+            ].map((item) => (
+              <div key={item.label} className="rounded-lg bg-gray-50 p-3">
+                <div className="flex items-center gap-1.5 mb-1">
+                  <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: item.color }} />
+                  <span className="text-xs font-medium text-gray-700">{item.label}</span>
+                </div>
+                <div className="text-2xl font-bold text-gray-900">
+                  {item.current ?? "—"}
+                  <span className="text-sm text-gray-400 font-normal">/100</span>
+                </div>
+                <div className={`text-xs mt-0.5 ${yoyColor(item.pct)}`}>
+                  {yoyLabel(item.pct)}
+                </div>
+                <div className="text-xs text-gray-400 mt-0.5">{item.desc}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* 24-month trend chart */}
+          {trends.monthly.length > 0 && (
+            <ResponsiveContainer width="100%" height={220}>
+              <LineChart data={trends.monthly} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                <XAxis dataKey="label" tick={{ fontSize: 10 }} interval={2} />
+                <YAxis tick={{ fontSize: 10 }} domain={[0, 100]} unit="" />
+                <Tooltip formatter={(v: any) => `${v}/100`} />
+                <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
+                <Line
+                  type="monotone" dataKey="venue" name="Venue searches"
+                  stroke="#3b82f6" strokeWidth={2} dot={false}
+                />
+                <Line
+                  type="monotone" dataKey="engagement" name="Engagement ring searches"
+                  stroke="#f43f5e" strokeWidth={2} strokeDasharray="4 2" dot={false}
+                />
+                <Line
+                  type="monotone" dataKey="divorce" name="Divorce searches"
+                  stroke="#94a3b8" strokeWidth={1.5} strokeDasharray="2 4" dot={false}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          )}
+
+          <p className="text-xs text-gray-400">
+            Index is relative — 100 = peak search week in the period. Useful for comparing
+            seasonal patterns and year-over-year shifts, not absolute volume.
+          </p>
+        </div>
+      )}
+
+      {/* ── WEATHER SEASONALITY (heat + rain split) ── */}
+      {weatherByMonth.some((m) => m.rainScore !== null) && (
+        <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-5">
+          <div>
+            <h2 className="text-base font-semibold text-gray-900 mb-0.5">Weather seasonality</h2>
+            <p className="text-xs text-gray-400">
+              10-year monthly averages. 0 = no risk, 10 = high risk for outdoor events.
+            </p>
+          </div>
+
+          {/* Rain score */}
+          <div>
+            <p className="text-xs font-medium text-gray-600 mb-2">
+              Rain risk — <span className="font-normal text-gray-400">monthly precipitation (0 = dry, 10 = 5"+ avg)</span>
+            </p>
+            <div className="grid grid-cols-12 gap-1">
+              {weatherByMonth.map((m) => (
+                <div key={m.month} className="text-center">
+                  <div
+                    className="rounded mx-auto mb-1 flex items-center justify-center"
+                    style={{ height: 48, backgroundColor: m.rainScore !== null ? rainColor(m.rainScore) : "#e5e7eb" }}
+                  >
+                    {m.rainScore !== null && (
+                      <span className={`text-xs font-bold ${m.rainScore >= 6 ? "text-white" : "text-gray-700"}`}>
+                        {m.rainScore}
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-[10px] text-gray-400">{m.month}</span>
+                  {m.avgPrecip !== null && (
+                    <span className="block text-[10px] text-gray-400">{m.avgPrecip}"</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Heat score */}
+          <div>
+            <p className="text-xs font-medium text-gray-600 mb-2">
+              Temperature discomfort — <span className="font-normal text-gray-400">0 = ideal 65–78°F, rises toward freezing or sweltering</span>
+            </p>
+            <div className="grid grid-cols-12 gap-1">
+              {weatherByMonth.map((m) => (
+                <div key={m.month} className="text-center">
+                  <div
+                    className="rounded mx-auto mb-1 flex items-center justify-center"
+                    style={{ height: 48, backgroundColor: m.heatScore !== null ? heatColor(m.heatScore) : "#e5e7eb" }}
+                  >
+                    {m.heatScore !== null && (
+                      <span className={`text-xs font-bold ${m.heatScore >= 6 ? "text-white" : "text-gray-700"}`}>
+                        {m.heatScore}
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-[10px] text-gray-400">{m.month}</span>
+                  {m.avgTemp !== null && (
+                    <span className="block text-[10px] text-gray-400">{m.avgTemp}°F</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── CONSUMER SENTIMENT ── */}
       {sentimentChart.length > 0 && (
         <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <h2 className="text-base font-semibold text-gray-900 mb-4">Consumer confidence (UMich)</h2>
+          <h2 className="text-base font-semibold text-gray-900 mb-1">Consumer confidence (UMich)</h2>
+          <p className="text-xs text-gray-400 mb-4">
+            University of Michigan Consumer Sentiment Index. Lower values = consumers feel financially cautious,
+            which depresses discretionary spend like weddings.
+          </p>
           <ResponsiveContainer width="100%" height={200}>
             <LineChart data={sentimentChart}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
@@ -57,36 +251,7 @@ export default function MacroPage() {
         </div>
       )}
 
-      {/* Weather seasonality */}
-      {weatherByMonth.some((m) => m.avgScore !== null) && (
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <h2 className="text-base font-semibold text-gray-900 mb-2">Weather seasonality</h2>
-          <p className="text-sm text-gray-500 mb-4">Average weather difficulty score (0=ideal, 10=severe)</p>
-          <div className="grid grid-cols-12 gap-1">
-            {weatherByMonth.map((m) => (
-              <div key={m.month} className="text-center">
-                <div
-                  className="rounded mx-auto mb-1"
-                  style={{
-                    height: 60,
-                    width: "100%",
-                    background: m.avgScore !== null
-                      ? `hsl(${220 - (m.avgScore * 22)}, 70%, 55%)`
-                      : "#e5e7eb",
-                    opacity: m.avgScore !== null ? 0.7 + (m.avgScore * 0.03) : 0.3,
-                  }}
-                />
-                <span className="text-xs text-gray-400">{m.month}</span>
-                {m.avgScore !== null && (
-                  <span className="block text-xs font-medium text-gray-600">{m.avgScore}</span>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Competitors */}
+      {/* ── COMPETITORS ── */}
       {competitors && competitors.length > 0 && (
         <div className="bg-white rounded-lg border border-gray-200 p-6">
           <h2 className="text-base font-semibold text-gray-900 mb-4">
