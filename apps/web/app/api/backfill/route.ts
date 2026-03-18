@@ -176,8 +176,8 @@ export async function POST(req: NextRequest) {
   }
 
   const { job } = await req.json();
-  if (!job || !["noaa", "fred", "all"].includes(job)) {
-    return NextResponse.json({ error: "job must be 'noaa', 'fred', or 'all'" }, { status: 400 });
+  if (!job || !["noaa", "fred", "trends", "all"].includes(job)) {
+    return NextResponse.json({ error: "job must be 'noaa', 'fred', 'trends', or 'all'" }, { status: 400 });
   }
 
   const supabase = createClient(
@@ -185,16 +185,15 @@ export async function POST(req: NextRequest) {
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   );
 
-  // Get the venue's station ID
   const { data: venues } = await supabase
     .from("venues")
-    .select("id, noaa_station_id")
-    .not("noaa_station_id", "is", null);
+    .select("id, noaa_station_id, google_trends_metro")
+    .limit(100);
 
   const log: string[] = [];
 
   if (job === "noaa" || job === "all") {
-    for (const venue of venues ?? []) {
+    for (const venue of (venues ?? []).filter((v: any) => v.noaa_station_id)) {
       log.push(`\nBackfilling NOAA for station ${venue.noaa_station_id}...`);
       await backfillNOAA(supabase, venue.noaa_station_id, log);
     }
@@ -203,6 +202,26 @@ export async function POST(req: NextRequest) {
   if (job === "fred" || job === "all") {
     log.push("\nBackfilling FRED...");
     await backfillFRED(supabase, log);
+  }
+
+  if (job === "trends" || job === "all") {
+    const serpKey = process.env.SERPAPI_KEY;
+    if (!serpKey) {
+      log.push("SERPAPI_KEY not set — skipping trends");
+    } else {
+      const { ingestTrendsForGeo } = await import(
+        "../../../../packages/ingestion/trends/ingest-trends"
+      );
+      const uniqueGeos = [
+        ...new Set((venues ?? [])
+          .map((v: any) => v.google_trends_metro as string)
+          .filter(Boolean))
+      ];
+      log.push(`\nBackfilling trends for geos: ${uniqueGeos.join(", ")}`);
+      for (const geo of uniqueGeos) {
+        await ingestTrendsForGeo(supabase, geo, serpKey, log);
+      }
+    }
   }
 
   return NextResponse.json({ ok: true, log });

@@ -289,8 +289,13 @@ export default function SettingsPage() {
             className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
           />
           <p className="text-xs text-gray-400 mt-1">
-            DMA name used for wedding venue search interest. Virginia venues typically use
-            <span className="font-medium"> Washington DC</span> or <span className="font-medium">Richmond-Petersburg VA</span>.
+            SerpAPI geo code for local search trend data. Use a country + state code:
+            {" "}<span className="font-medium">US-DC</span> (DC/NoVA market),
+            {" "}<span className="font-medium">US-VA</span> (all Virginia),
+            {" "}<span className="font-medium">US-NY</span>,
+            {" "}<span className="font-medium">US-GA</span>,
+            {" "}<span className="font-medium">US-TX</span>.
+            Venues in the same market share one data pull.
           </p>
         </div>
 

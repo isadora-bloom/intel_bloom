@@ -43,6 +43,14 @@ export async function POST(request: NextRequest) {
         break;
       }
 
+      // ── WEEKLY ──
+      case "trends_refresh": {
+        const { ingestTrendsAllVenues } = await import("@bloom/ingestion/trends/ingest-trends");
+        const log: string[] = [];
+        await ingestTrendsAllVenues(log);
+        return NextResponse.json({ success: true, job, log });
+      }
+
       // ── MONTHLY ──
       case "fred_economic_signals": {
         const { ingestFredSeries } = await import("@bloom/ingestion/fred/ingest-economic");
