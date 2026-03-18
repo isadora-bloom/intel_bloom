@@ -180,7 +180,81 @@ Return a JSON array of exactly ${emails.length} objects in this order, one per e
   }
 }
 
-// ── MATCHING LOGIC ────────────────────────────────────────────────────────────
+// ── MATCHING HELPERS ─────────────────────────────────────────────────────────
+
+// Score how likely two names refer to the same person.
+// Handles: exact match, nicknames ("Maddy" / "Madeline"), initials ("Maddy D." / "Madeline Deep")
+export function nameMatchScore(nameA: string, nameB: string): number {
+  const clean = (s: string) => s.trim().toLowerCase().replace(/\.$/, "");
+  const a = clean(nameA);
+  const b = clean(nameB);
+  if (a === b) return 100;
+
+  const aParts = a.split(/\s+/);
+  const bParts = b.split(/\s+/);
+  const aFirst = aParts[0];
+  const bFirst = bParts[0];
+  const aLast = aParts.length > 1 ? clean(aParts[aParts.length - 1]) : null;
+  const bLast = bParts.length > 1 ? clean(bParts[bParts.length - 1]) : null;
+
+  let score = 0;
+
+  // First name scoring
+  if (aFirst === bFirst) {
+    score += 60;
+  } else if (aFirst.length >= 3 && bFirst.length >= 3) {
+    // Count shared prefix length
+    let shared = 0;
+    while (shared < aFirst.length && shared < bFirst.length && aFirst[shared] === bFirst[shared]) {
+      shared++;
+    }
+    // "Maddy" / "Madeline" share 3 chars ("mad") — moderate match
+    // "Maggi" / "Margaret" share 3 chars ("mag") — moderate
+    if (shared >= 5) score += 50;
+    else if (shared >= 4) score += 38;
+    else if (shared >= 3) score += 22;
+  }
+
+  // Last name / initial scoring (only matters if first name already partially matched)
+  if (score > 0 && aLast && bLast) {
+    if (aLast === bLast) {
+      score += 40; // full last name match
+    } else if (aLast.length === 1 && bLast.startsWith(aLast)) {
+      score += 28; // "D" initial matches "Deep"
+    } else if (bLast.length === 1 && aLast.startsWith(bLast)) {
+      score += 28; // "Deep" matched against "D" initial
+    }
+  }
+
+  return Math.min(score, 100);
+}
+
+// Days between two date strings (ISO or parseable). Returns null if either is missing.
+export function daysBetween(dateA: string | null, dateB: string | null): number | null {
+  if (!dateA || !dateB) return null;
+  try {
+    const diff = Math.abs(new Date(dateA).getTime() - new Date(dateB).getTime());
+    return diff / (1000 * 60 * 60 * 24);
+  } catch {
+    return null;
+  }
+}
+
+// Hard cutoff: over this many days apart = different planning cycle, don't link.
+const MAX_LINK_DAYS = 365;
+
+// Bonus/penalty based on how close in time two touches are.
+// Positive = same person likely. Negative = probably different inquiry cycle.
+export function timeProximityBonus(days: number): number {
+  if (days <= 3)   return 35;  // 48-hour window — very strong
+  if (days <= 14)  return 22;  // within two weeks
+  if (days <= 30)  return 12;  // within a month
+  if (days <= 90)  return 4;   // within a quarter — mild
+  if (days <= 180) return -10; // getting stale
+  return -25;                  // 6-12 months apart — probably different cycle
+}
+
+// ── MATCH RESULT ──────────────────────────────────────────────────────────────
 
 interface MatchResult {
   matchedLeadId: string | null;
@@ -195,7 +269,8 @@ async function matchExtraction(
   supabase: any,
   venueId: string,
   extraction: EmailExtraction,
-  fromEmail: string
+  fromEmail: string,
+  emailReceivedAt: string | null
 ): Promise<MatchResult> {
   let score = 0;
   const signals: string[] = [];
@@ -203,110 +278,152 @@ async function matchExtraction(
   let matchedInquiryId: string | null = null;
   let matchedClientId: string | null = null;
 
+  const cleanEmail = fromEmail.toLowerCase().trim();
+
+  // Fetch candidates in parallel — cast a wide net by first 3 chars of first name
   const firstName = extraction.name
     ? extraction.name.trim().split(/\s+/)[0].toLowerCase()
     : null;
-  const cleanEmail = fromEmail.toLowerCase().trim();
+  const namePrefix = firstName ? firstName.slice(0, 3) : null;
 
-  // Run queries in parallel
   const [inquiriesRes, clientsRes, leadsRes] = await Promise.all([
-    // Match by email address in inquiries
     cleanEmail
       ? supabase
           .from("inquiries")
-          .select("id, name_extracted, platform, received_at")
+          .select("id, name_extracted, platform, received_at, email_extracted")
           .eq("venue_id", venueId)
           .ilike("email_extracted", cleanEmail)
           .limit(3)
       : { data: [] },
 
-    // Match by email in clients
     cleanEmail
       ? supabase
           .from("clients")
-          .select("id, name_primary, first_touch_platform, event_date")
+          .select("id, name_primary, first_touch_platform, event_date, email_primary")
           .eq("venue_id", venueId)
           .ilike("email_primary", cleanEmail)
           .limit(3)
       : { data: [] },
 
-    // Match leads by first name + platform
-    firstName && extraction.source
+    // Wide name search — we score properly below
+    namePrefix
       ? supabase
           .from("leads")
           .select("id, name, platform, touch_type, source_date")
           .eq("venue_id", venueId)
-          .ilike("name", `${firstName}%`)
-          .eq("platform", extraction.source.toLowerCase().replace(/\s+/g, "_"))
-          .limit(5)
-      : firstName
-      ? supabase
-          .from("leads")
-          .select("id, name, platform, touch_type, source_date")
-          .eq("venue_id", venueId)
-          .ilike("name", `${firstName}%`)
-          .limit(5)
+          .ilike("name", `${namePrefix}%`)
+          .limit(20)
       : { data: [] },
   ]);
 
-  // Email address match — strongest signal
+  // ── Email address match (order-independent, strongest signal) ──────────────
+
   if (clientsRes.data?.length > 0) {
-    const match = clientsRes.data[0];
-    matchedClientId = match.id;
+    matchedClientId = clientsRes.data[0].id;
     score += 90;
     signals.push("email address matches client record");
   }
 
   if (inquiriesRes.data?.length > 0) {
-    const match = inquiriesRes.data[0];
-    matchedInquiryId = match.id;
+    const inq = inquiriesRes.data[0];
+    matchedInquiryId = inq.id;
     score += 90;
     signals.push("email address matches inquiry record");
+    // Time proximity bonus on the inquiry itself
+    const days = daysBetween(emailReceivedAt, inq.received_at);
+    if (days !== null && days <= MAX_LINK_DAYS) {
+      const bonus = timeProximityBonus(days);
+      if (bonus !== 0) {
+        score += bonus;
+        signals.push(`inquiry ${Math.round(days)}d apart`);
+      }
+    }
   }
 
-  // Lead match — name + platform
-  if (leadsRes.data?.length > 0 && firstName) {
-    const lead = leadsRes.data[0];
-    const leadFirst = lead.name?.trim().split(/\s+/)[0]?.toLowerCase() ?? "";
-    if (leadFirst === firstName) {
-      matchedLeadId = lead.id;
-      score += extraction.source ? 55 : 30;
+  // ── Name-based lead matching (fuzzy + time window) ─────────────────────────
+
+  if (extraction.name && leadsRes.data?.length > 0) {
+    // Find the best-scoring lead candidate
+    let bestLead: any = null;
+    let bestLeadScore = 0;
+
+    for (const lead of leadsRes.data ?? []) {
+      if (!lead.name) continue;
+
+      const nScore = nameMatchScore(extraction.name, lead.name);
+      if (nScore < 40) continue; // not plausibly the same person
+
+      // Time proximity — works regardless of which came first
+      const days = daysBetween(emailReceivedAt, lead.source_date);
+
+      // Hard block: over a year apart = different planning cycle
+      if (days !== null && days > MAX_LINK_DAYS) continue;
+
+      let candidateScore = nScore;
+
+      // Time proximity bonus/penalty
+      if (days !== null) {
+        candidateScore += timeProximityBonus(days);
+      }
+
+      // Platform corroboration: email mentions same source as lead platform
+      if (
+        extraction.source &&
+        lead.platform &&
+        extraction.source.toLowerCase().replace(/\s+/g, "_") === lead.platform
+      ) {
+        candidateScore += 20;
+      }
+
+      if (candidateScore > bestLeadScore) {
+        bestLeadScore = candidateScore;
+        bestLead = lead;
+      }
+    }
+
+    if (bestLead && bestLeadScore >= 40) {
+      matchedLeadId = bestLead.id;
+      score += bestLeadScore;
+
+      const days = daysBetween(emailReceivedAt, bestLead.source_date);
+      const daysStr = days !== null ? ` (${Math.round(days)}d apart)` : "";
       signals.push(
-        extraction.source
-          ? `first name matches lead from ${lead.platform} (${lead.touch_type})`
-          : `first name matches lead record`
+        `name match: "${bestLead.name}" via ${bestLead.platform} ${bestLead.touch_type}${daysStr}`
       );
     }
   }
 
-  // Event date match boosts score
-  if (extraction.eventDate) {
-    const [clientDateRes] = await Promise.all([
-      firstName
-        ? supabase
-            .from("clients")
-            .select("id, name_primary")
-            .eq("venue_id", venueId)
-            .eq("event_date", extraction.eventDate)
-            .ilike("name_primary", `${firstName}%`)
-            .limit(1)
-        : { data: [] },
-    ]);
+  // ── Event date corroboration ───────────────────────────────────────────────
 
-    if (clientDateRes.data?.length > 0 && !matchedClientId) {
-      matchedClientId = clientDateRes.data[0].id;
-      score += 60;
-      signals.push("first name + event date matches client");
-    } else if (matchedClientId) {
-      score += 20;
-      signals.push("event date also matches");
+  if (extraction.eventDate && firstName) {
+    const { data: clientDateMatch } = await supabase
+      .from("clients")
+      .select("id, name_primary")
+      .eq("venue_id", venueId)
+      .eq("event_date", extraction.eventDate)
+      .ilike("name_primary", `${firstName.slice(0, 3)}%`)
+      .limit(3);
+
+    for (const c of clientDateMatch ?? []) {
+      const nScore = nameMatchScore(extraction.name ?? firstName, c.name_primary ?? "");
+      if (nScore >= 30) {
+        if (!matchedClientId) {
+          matchedClientId = c.id;
+          score += 55;
+          signals.push("first name + event date matches client");
+        } else {
+          score += 15;
+          signals.push("event date corroborated");
+        }
+        break;
+      }
     }
   }
 
-  // Source mention adds confidence to lead match
+  // Source quote adds confidence when we have a lead match
   if (extraction.sourceQuote && matchedLeadId) {
-    score += 15;
-    signals.push(`mentions source: "${extraction.sourceQuote.slice(0, 60)}"`);
+    score += 12;
+    signals.push(`source mentioned: "${extraction.sourceQuote.slice(0, 60)}"`);
   }
 
   const matchStatus: MatchResult["matchStatus"] =
@@ -461,7 +578,8 @@ export const emailRouter = router({
           ctx.supabase,
           ctx.venueId,
           extraction,
-          fromEmail
+          fromEmail,
+          receivedAt
         );
 
         const receivedAt = extraction.internalDate

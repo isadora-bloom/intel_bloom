@@ -2,6 +2,7 @@ import { z } from "zod";
 import { router, venueProcedure } from "@/lib/trpc/server";
 import { TRPCError } from "@trpc/server";
 import Anthropic from "@anthropic-ai/sdk";
+import { nameMatchScore, daysBetween, timeProximityBonus } from "./email";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -1079,26 +1080,41 @@ export const captureRouter = router({
 // ── BACKGROUND DUPLICATE SCAN ─────────────────────────────────────────────────
 // Called after every commit — finds client/metric duplicates and queues them
 
+const MAX_LINK_DAYS = 365; // hard cutoff — different planning cycle
+
 async function runDuplicateScan(supabase: any, venueId: string) {
-  const [{ data: clients }, { data: existing }] = await Promise.all([
-    supabase
-      .from("clients")
-      .select("id, name_primary, email_primary, event_date")
-      .eq("venue_id", venueId),
-    supabase
-      .from("matching_queue")
-      .select("record_a_id, record_b_id")
-      .eq("venue_id", venueId)
-      .neq("status", "rejected"),
-  ]);
+  const [{ data: clients }, { data: leads }, { data: emailExtractions }, { data: existing }] =
+    await Promise.all([
+      supabase
+        .from("clients")
+        .select("id, name_primary, email_primary, event_date")
+        .eq("venue_id", venueId),
+      supabase
+        .from("leads")
+        .select("id, name, platform, touch_type, source_date")
+        .eq("venue_id", venueId)
+        .not("name", "is", null),
+      supabase
+        .from("email_extractions")
+        .select("id, extracted_name, from_email, received_at, extracted_source, matched_lead_id")
+        .eq("venue_id", venueId)
+        .eq("match_status", "unmatched")
+        .not("extracted_name", "is", null),
+      supabase
+        .from("matching_queue")
+        .select("record_a_id, record_b_id")
+        .eq("venue_id", venueId)
+        .neq("status", "rejected"),
+    ]);
 
   const alreadyQueued = new Set<string>(
     (existing ?? []).map((e: any) => [e.record_a_id, e.record_b_id].sort().join(":"))
   );
 
   const toInsert: any[] = [];
-  const clientList = clients ?? [];
 
+  // ── Client × client duplicate detection ───────────────────────────────────
+  const clientList = clients ?? [];
   for (let i = 0; i < clientList.length; i++) {
     for (let j = i + 1; j < clientList.length; j++) {
       const a = clientList[i];
@@ -1119,23 +1135,73 @@ async function runDuplicateScan(supabase: any, venueId: string) {
       }
 
       if (a.name_primary && b.name_primary) {
-        const aFirst = a.name_primary.trim().split(/\s+/)[0].toLowerCase();
-        const bFirst = b.name_primary.trim().split(/\s+/)[0].toLowerCase();
-        if (aFirst.length >= 3 && aFirst === bFirst) {
-          score += 25; signals.push("same first name");
-        }
+        const nScore = nameMatchScore(a.name_primary, b.name_primary);
+        if (nScore >= 60) { score += Math.round(nScore * 0.3); signals.push(`name match (${nScore})`); }
       }
 
       if (score >= 60) {
         toInsert.push({
           venue_id: venueId,
-          record_a_type: "client",
-          record_a_id: a.id,
-          record_b_type: "client",
-          record_b_id: b.id,
-          match_score: score,
-          signals_matched: signals,
-          status: "pending",
+          record_a_type: "client", record_a_id: a.id,
+          record_b_type: "client", record_b_id: b.id,
+          match_score: score, signals_matched: signals, status: "pending",
+        });
+        alreadyQueued.add(pairKey);
+      }
+    }
+  }
+
+  // ── Lead × email extraction — bidirectional journey linking ───────────────
+  // For each unmatched email extraction, check if any lead could be the same person.
+  // Works regardless of which came first (email before save, or save before email).
+  const leadList = leads ?? [];
+  const emailList = emailExtractions ?? [];
+
+  for (const email of emailList) {
+    if (!email.extracted_name) continue;
+    const emailPrefix = email.extracted_name.trim().split(/\s+/)[0].toLowerCase().slice(0, 3);
+
+    for (const lead of leadList) {
+      if (!lead.name) continue;
+      const leadPrefix = lead.name.trim().split(/\s+/)[0].toLowerCase().slice(0, 3);
+      if (leadPrefix !== emailPrefix) continue; // fast pre-filter
+
+      const pairKey = [email.id, lead.id].sort().join(":");
+      if (alreadyQueued.has(pairKey)) continue;
+
+      const nScore = nameMatchScore(email.extracted_name, lead.name);
+      if (nScore < 40) continue;
+
+      // Time window check — hard block over 1 year
+      const days = daysBetween(email.received_at, lead.source_date);
+      if (days !== null && days > MAX_LINK_DAYS) continue;
+
+      let score = nScore;
+      const signals: string[] = [`name match: "${email.extracted_name}" ↔ "${lead.name}" (${nScore})`];
+
+      // Time proximity
+      if (days !== null) {
+        const tBonus = timeProximityBonus(days);
+        score += tBonus;
+        signals.push(`${Math.round(days)}d apart`);
+      }
+
+      // Platform corroboration
+      if (
+        email.extracted_source &&
+        lead.platform &&
+        email.extracted_source.toLowerCase().replace(/\s+/g, "_") === lead.platform
+      ) {
+        score += 20;
+        signals.push(`platform corroborated: ${lead.platform}`);
+      }
+
+      if (score >= 50) {
+        toInsert.push({
+          venue_id: venueId,
+          record_a_type: "email_extraction", record_a_id: email.id,
+          record_b_type: "lead",             record_b_id: lead.id,
+          match_score: Math.min(score, 100), signals_matched: signals, status: "pending",
         });
         alreadyQueued.add(pairKey);
       }
