@@ -25,7 +25,16 @@ export default function SettingsPage() {
     googleTrendsMetro: "",
     noaaStationId: "",
     fedDistrict: "",
+    trendsCustomTerms: ["", "", "", ""] as string[],
   });
+
+  // Pre-fill custom trends terms from saved venue data
+  useEffect(() => {
+    if (!venue) return;
+    const saved: string[] = (venue as any).trends_custom_terms ?? [];
+    const padded = [...saved, "", "", "", ""].slice(0, 4);
+    setForm(f => ({ ...f, trendsCustomTerms: padded }));
+  }, [venue]);
 
   // Flash success/error from OAuth callback
   useEffect(() => {
@@ -44,6 +53,7 @@ export default function SettingsPage() {
       googleTrendsMetro: form.googleTrendsMetro || undefined,
       noaaStationId: form.noaaStationId || undefined,
       fedDistrict: form.fedDistrict ? parseInt(form.fedDistrict) : undefined,
+      trendsCustomTerms: form.trendsCustomTerms.filter(t => t.trim() !== ""),
     });
     setSaved(true);
     setTimeout(() => setSaved(false), 3000);
@@ -296,6 +306,33 @@ export default function SettingsPage() {
             {" "}<span className="font-medium">US-GA</span>,
             {" "}<span className="font-medium">US-TX</span>.
             Venues in the same market share one data pull.
+          </p>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Custom search terms <span className="font-normal text-gray-400">(up to 4)</span>
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            {form.trendsCustomTerms.map((term, i) => (
+              <input
+                key={i}
+                type="text"
+                placeholder={`Term ${i + 1} — e.g. "elopement"`}
+                value={term}
+                maxLength={80}
+                onChange={(e) => {
+                  const next = [...form.trendsCustomTerms];
+                  next[i] = e.target.value;
+                  setForm(f => ({ ...f, trendsCustomTerms: next }));
+                }}
+                className="border border-gray-300 rounded px-3 py-2 text-sm"
+              />
+            ))}
+          </div>
+          <p className="text-xs text-gray-400 mt-1">
+            These appear as extra lines on the Market Pulse trends chart. Use exact phrases as you'd search Google Trends — e.g. "vineyard wedding", "micro wedding", "elopement Virginia".
+            Save settings then re-run the trends ingestion script to populate them.
           </p>
         </div>
 

@@ -35,11 +35,12 @@ export const macroRouter = router({
   getSearchTrends: venueProcedure.query(async ({ ctx }) => {
     const { data: venue } = await ctx.supabase
       .from("venues")
-      .select("google_trends_metro")
+      .select("google_trends_metro, trends_custom_terms")
       .eq("id", ctx.venueId)
       .single();
 
     if (!venue?.google_trends_metro) return null;
+    const customTerms: string[] = venue.trends_custom_terms ?? [];
 
     const twoYearsAgo = new Date();
     twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
@@ -53,6 +54,7 @@ export const macroRouter = router({
         "wedding venue", "wedding venues",
         "engagement ring", "how to propose",
         "divorce lawyer",
+        ...customTerms,
       ])
       .gte("week_start", fromIso)
       .order("week_start", { ascending: true });
@@ -86,6 +88,15 @@ export const macroRouter = router({
         venue: avg(b.venue),
         engagement: avg(b.engagement),
         divorce: avg(b.divorce),
+        // Custom terms: one value per term, averaged weekly→monthly
+        custom: customTerms.map(term => ({
+          term,
+          value: avg(
+            rows
+              .filter(r => r.term === term && r.week_start.slice(0, 7) === month)
+              .map(r => r.relative_interest)
+          ),
+        })),
       }));
 
     // YoY: compare most recent month with same month last year
@@ -107,6 +118,7 @@ export const macroRouter = router({
 
     return {
       monthly,
+      customTerms,
       yoy: {
         venueThis,
         venueLast,

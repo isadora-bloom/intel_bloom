@@ -129,6 +129,17 @@ export default function MacroPage() {
                   type="monotone" dataKey="divorce" name="Divorce searches"
                   stroke="#94a3b8" strokeWidth={1.5} strokeDasharray="2 4" dot={false}
                 />
+                {(trends.customTerms ?? []).map((term: string, i: number) => (
+                  <Line
+                    key={term}
+                    type="monotone"
+                    dataKey={(d: any) => d.custom?.[i]?.value ?? null}
+                    name={term}
+                    stroke={["#f97316","#8b5cf6","#06b6d4","#84cc16"][i % 4]}
+                    strokeWidth={1.5}
+                    dot={false}
+                  />
+                ))}
               </LineChart>
             </ResponsiveContainer>
           )}
