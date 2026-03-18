@@ -22,6 +22,9 @@ export default function SettingsPage() {
     knotVenueId: "",
     competitorRadiusMiles: 30,
     contributesToBenchmark: true,
+    googleTrendsMetro: "",
+    noaaStationId: "",
+    fedDistrict: "",
   });
 
   // Flash success/error from OAuth callback
@@ -38,6 +41,9 @@ export default function SettingsPage() {
       knotVenueId: form.knotVenueId || undefined,
       competitorRadiusMiles: form.competitorRadiusMiles,
       contributesToBenchmark: form.contributesToBenchmark,
+      googleTrendsMetro: form.googleTrendsMetro || undefined,
+      noaaStationId: form.noaaStationId || undefined,
+      fedDistrict: form.fedDistrict ? parseInt(form.fedDistrict) : undefined,
     });
     setSaved(true);
     setTimeout(() => setSaved(false), 3000);
@@ -258,6 +264,78 @@ export default function SettingsPage() {
             onChange={(e) => setForm(f => ({ ...f, knotVenueId: e.target.value }))}
             className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
           />
+        </div>
+      </div>
+
+      {/* Intelligence calibration */}
+      <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-4">
+        <div>
+          <h2 className="text-base font-semibold text-gray-900">Intelligence calibration</h2>
+          <p className="text-xs text-gray-400 mt-0.5">
+            These tell Bloom which data sources map to your venue's location.
+            Without them, weather, search trend, and macro signals won't appear.
+          </p>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Google Trends metro
+          </label>
+          <input
+            type="text"
+            placeholder={(venue as any).google_trends_metro ?? "e.g. Washington DC"}
+            value={form.googleTrendsMetro}
+            onChange={(e) => setForm(f => ({ ...f, googleTrendsMetro: e.target.value }))}
+            className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+          />
+          <p className="text-xs text-gray-400 mt-1">
+            DMA name used for wedding venue search interest. Virginia venues typically use
+            <span className="font-medium"> Washington DC</span> or <span className="font-medium">Richmond-Petersburg VA</span>.
+          </p>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            NOAA station ID
+          </label>
+          <input
+            type="text"
+            placeholder={(venue as any).noaa_station_id ?? "e.g. GHCND:USW00013741"}
+            value={form.noaaStationId}
+            onChange={(e) => setForm(f => ({ ...f, noaaStationId: e.target.value }))}
+            className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+          />
+          <p className="text-xs text-gray-400 mt-1">
+            Nearest weather station. For Rapidan VA: try <span className="font-medium">GHCND:USW00013741</span> (Culpeper)
+            or <span className="font-medium">GHCND:USW00013721</span> (Dulles).
+            Find yours at <span className="font-medium">ncdc.noaa.gov/cdo-web/datatools/findstation</span>
+          </p>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Federal Reserve district
+          </label>
+          <select
+            value={form.fedDistrict}
+            onChange={(e) => setForm(f => ({ ...f, fedDistrict: e.target.value }))}
+            className="border border-gray-300 rounded px-3 py-2 text-sm"
+          >
+            <option value="">{(venue as any).fed_district ? `Currently: District ${(venue as any).fed_district}` : "Select district"}</option>
+            <option value="1">1 — Boston</option>
+            <option value="2">2 — New York</option>
+            <option value="3">3 — Philadelphia</option>
+            <option value="4">4 — Cleveland</option>
+            <option value="5">5 — Richmond (VA, MD, NC, SC, WV, DC)</option>
+            <option value="6">6 — Atlanta</option>
+            <option value="7">7 — Chicago</option>
+            <option value="8">8 — St. Louis</option>
+            <option value="9">9 — Minneapolis</option>
+            <option value="10">10 — Kansas City</option>
+            <option value="11">11 — Dallas</option>
+            <option value="12">12 — San Francisco</option>
+          </select>
+          <p className="text-xs text-gray-400 mt-1">Virginia venues use District 5 (Richmond Fed).</p>
         </div>
       </div>
 

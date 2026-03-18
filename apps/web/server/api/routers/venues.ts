@@ -25,6 +25,9 @@ export const venuesRouter = router({
         googlePlaceId: z.string().optional(),
         competitorRadiusMiles: z.number().int().min(5).max(100).optional(),
         contributesToBenchmark: z.boolean().optional(),
+        googleTrendsMetro: z.string().optional(),
+        noaaStationId: z.string().optional(),
+        fedDistrict: z.number().int().min(1).max(12).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -35,6 +38,9 @@ export const venuesRouter = router({
       if (input.googlePlaceId !== undefined) updateData.google_place_id = input.googlePlaceId;
       if (input.competitorRadiusMiles !== undefined) updateData.competitor_radius_miles = input.competitorRadiusMiles;
       if (input.contributesToBenchmark !== undefined) updateData.contributes_to_benchmark = input.contributesToBenchmark;
+      if (input.googleTrendsMetro !== undefined) updateData.google_trends_metro = input.googleTrendsMetro;
+      if (input.noaaStationId !== undefined) updateData.noaa_station_id = input.noaaStationId;
+      if (input.fedDistrict !== undefined) updateData.fed_district = input.fedDistrict;
 
       const { data, error } = await ctx.supabase
         .from("venues")
