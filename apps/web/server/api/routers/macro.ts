@@ -162,11 +162,11 @@ export const macroRouter = router({
 
     function rainScore(p: number) { return Math.min(10, Math.round(p * 2)); }
     // Based on avg daily TMAX (afternoon peak ~3pm), not 24hr average
-    // Ideal outdoor ceremony temp: 72–85°F afternoon. Rises toward cold or sweltering.
+    // Ideal outdoor ceremony temp: 65–75°F at 3pm (centred on 70°F)
     function heatScore(tmax: number) {
-      if (tmax >= 72 && tmax <= 85) return 0;
-      if (tmax < 72) return Math.min(10, Math.round((72 - tmax) / 4));
-      return Math.min(10, Math.round((tmax - 85) / 2));
+      if (tmax >= 65 && tmax <= 75) return 0;
+      if (tmax < 65) return Math.min(10, Math.round((65 - tmax) / 4));
+      return Math.min(10, Math.round((tmax - 75) / 2));
     }
     function trend(vals: (number | null)[]): "rising" | "falling" | "stable" | null {
       const pts = vals.map((v, i) => ({ x: i, y: v })).filter((p): p is { x: number; y: number } => p.y !== null);

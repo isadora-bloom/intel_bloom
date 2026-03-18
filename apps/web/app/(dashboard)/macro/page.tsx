@@ -203,7 +203,7 @@ export default function MacroPage() {
           {/* Heat score */}
           <div>
             <p className="text-xs font-medium text-gray-600 mb-2">
-              Temperature discomfort — <span className="font-normal text-gray-400">based on avg 3pm high. 0 = ideal 72–85°F, rises toward cold or sweltering</span>
+              Temperature discomfort — <span className="font-normal text-gray-400">based on avg 3pm high. 0 = ideal 65–75°F, rises toward cold or sweltering</span>
             </p>
             <div className="grid grid-cols-12 gap-1">
               {weatherByMonth.map((m: any) => {
