@@ -273,6 +273,7 @@ export const insightsRouter = router({
       insights.push({
         id: "source_performance",
         type: "source_performance",
+        timeframe: "past",
         headline: "Connect HoneyBook to see acquisition costs by channel",
         body: "Once your booking data is synced, Bloom will show you the cost per inquiry, tour, and booking for The Knot, Google Ads, Instagram, and every other source you use.",
         supporting: [],
