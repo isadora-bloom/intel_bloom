@@ -139,7 +139,7 @@ export const macroRouter = router({
 
     const { data, error } = await ctx.supabase
       .from("weather_monthly")
-      .select("year, month, precipitation_inches, temp_avg_f")
+      .select("year, month, precipitation_inches, temp_max_f")
       .eq("noaa_station_id", venue.noaa_station_id)
       .gte("year", threeYearsAgo)
       .order("year", { ascending: true })
@@ -149,10 +149,12 @@ export const macroRouter = router({
     const rows = data ?? [];
 
     function rainScore(p: number) { return Math.min(10, Math.round(p * 2)); }
-    function heatScore(t: number) {
-      if (t >= 65 && t <= 78) return 0;
-      if (t < 65) return Math.min(10, Math.round((65 - t) / 4));
-      return Math.min(10, Math.round((t - 78) / 2.5));
+    // Based on avg daily TMAX (afternoon peak ~3pm), not 24hr average
+    // Ideal outdoor ceremony temp: 72–85°F afternoon. Rises toward cold or sweltering.
+    function heatScore(tmax: number) {
+      if (tmax >= 72 && tmax <= 85) return 0;
+      if (tmax < 72) return Math.min(10, Math.round((72 - tmax) / 4));
+      return Math.min(10, Math.round((tmax - 85) / 2));
     }
     function trend(vals: (number | null)[]): "rising" | "falling" | "stable" | null {
       const pts = vals.map((v, i) => ({ x: i, y: v })).filter((p): p is { x: number; y: number } => p.y !== null);
@@ -176,7 +178,7 @@ export const macroRouter = router({
       const byYear = years.map(yr => {
         const r = monthRows.find(row => row.year === yr);
         const precip = r?.precipitation_inches ?? null;
-        const temp   = r?.temp_avg_f ?? null;
+        const temp   = r?.temp_max_f ?? null;
         return {
           year: yr,
           rain: precip !== null ? rainScore(precip) : null,

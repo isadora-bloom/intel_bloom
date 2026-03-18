@@ -176,7 +176,7 @@ export const analyticsRouter = router({
               if (!v?.noaa_station_id) return { data: [] };
               return ctx.supabase
                 .from("weather_monthly")
-                .select("month, year, temp_avg_f, precipitation_inches, weather_score")
+                .select("month, year, temp_max_f, precipitation_inches")
                 .eq("noaa_station_id", v.noaa_station_id)
                 .gte("year", fromDate.getFullYear())
                 .order("year").order("month");
@@ -248,11 +248,12 @@ export const analyticsRouter = router({
         // 0 = very dry (<0.5"), 10 = extremely wet (5"+)
         return Math.min(10, Math.round(precipInches * 2));
       }
-      function heatScore(tempAvgF: number): number {
-        // 0 = ideal for outdoor events (65–78°F), rises toward hot or cold extremes
-        if (tempAvgF >= 65 && tempAvgF <= 78) return 0;
-        if (tempAvgF < 65) return Math.min(10, Math.round((65 - tempAvgF) / 4));
-        return Math.min(10, Math.round((tempAvgF - 78) / 2.5));
+      // Based on avg daily TMAX (afternoon peak ~3pm)
+      // Ideal outdoor ceremony: 72–85°F at 3pm
+      function heatScore(tmax: number): number {
+        if (tmax >= 72 && tmax <= 85) return 0;
+        if (tmax < 72) return Math.min(10, Math.round((72 - tmax) / 4));
+        return Math.min(10, Math.round((tmax - 85) / 2));
       }
       function linearTrend(vals: (number | null)[]): "rising" | "falling" | "stable" | null {
         const pts = vals.map((v, i) => ({ x: i, y: v })).filter(p => p.y !== null) as { x: number; y: number }[];
@@ -275,6 +276,7 @@ export const analyticsRouter = router({
       // weatherGrid[monthIndex] = { label, years: [{year, heatScore, rainScore, tempAvg, precip}], rainTrend, heatTrend }
       const mean = (arr: number[]) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
 
+      // avgTemp here is TMAX (afternoon peak), labelled as "3pm avg" in UI
       const weatherByMonth: { avgTemp: number | null; avgPrecip: number | null; avgHeatScore: number | null; avgRainScore: number | null }[] =
         Array(12).fill(null).map(() => ({ avgTemp: null, avgPrecip: null, avgHeatScore: null, avgRainScore: null }));
 
@@ -282,7 +284,7 @@ export const analyticsRouter = router({
         const monthRows = allWeatherRows.filter((w: any) => (w.month as number) - 1 === mi);
         const byYear = years.map(yr => {
           const row = monthRows.find((w: any) => w.year === yr);
-          const temp = row?.temp_avg_f ?? null;
+          const temp = row?.temp_max_f ?? null;
           const precip = row?.precipitation_inches ?? null;
           return {
             year: yr,
