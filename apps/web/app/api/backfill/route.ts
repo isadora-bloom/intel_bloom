@@ -210,7 +210,7 @@ export async function POST(req: NextRequest) {
       log.push("SERPAPI_KEY not set — skipping trends");
     } else {
       const { ingestTrendsForGeo } = await import(
-        "../../../../packages/ingestion/trends/ingest-trends"
+        "@bloom/ingestion/trends/ingest-trends"
       );
       const uniqueGeos = [
         ...new Set((venues ?? [])
