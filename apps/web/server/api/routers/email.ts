@@ -574,6 +574,10 @@ export const emailRouter = router({
         const fromEmail = fromEmailMatch ? fromEmailMatch[1] : extraction.from;
         const fromName = extraction.from.replace(/<[^>]+>/, "").trim().replace(/^"(.*)"$/, "$1");
 
+        const receivedAt = extraction.internalDate
+          ? new Date(parseInt(extraction.internalDate)).toISOString()
+          : null;
+
         const match = await matchExtraction(
           ctx.supabase,
           ctx.venueId,
@@ -581,10 +585,6 @@ export const emailRouter = router({
           fromEmail,
           receivedAt
         );
-
-        const receivedAt = extraction.internalDate
-          ? new Date(parseInt(extraction.internalDate)).toISOString()
-          : null;
 
         const row = {
           venue_id: ctx.venueId,
