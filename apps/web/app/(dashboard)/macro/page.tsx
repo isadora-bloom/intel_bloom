@@ -20,16 +20,6 @@ function yoyLabel(pct: number | null) {
   return pct > 0 ? `+${pct}% vs LY` : `${pct}% vs LY`;
 }
 
-// Rain score 0–10
-function rainScore(precip: number): number {
-  return Math.min(10, Math.round(precip * 2));
-}
-// Heat score 0–10 (0 = ideal 65–78°F outdoor event temp)
-function heatScore(tempAvgF: number): number {
-  if (tempAvgF >= 65 && tempAvgF <= 78) return 0;
-  if (tempAvgF < 65) return Math.min(10, Math.round((65 - tempAvgF) / 4));
-  return Math.min(10, Math.round((tempAvgF - 78) / 2.5));
-}
 function rainColor(s: number): string {
   const stops = ["#eff6ff","#dbeafe","#bfdbfe","#93c5fd","#60a5fa","#3b82f6","#2563eb","#1d4ed8","#1e40af","#1e3a8a","#172554"];
   return stops[Math.min(10, s)];
@@ -38,8 +28,6 @@ function heatColor(s: number): string {
   const stops = ["#f0fdf4","#dcfce7","#bbf7d0","#86efac","#fde68a","#fbbf24","#f97316","#ef4444","#dc2626","#b91c1c","#7f1d1d"];
   return stops[Math.min(10, s)];
 }
-
-const MONTH_LABELS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
 export default function MacroPage() {
   const { data: pulse }      = trpc.macro.getMarketPulse.useQuery();
@@ -58,20 +46,7 @@ export default function MacroPage() {
       value: Number(s.value),
     }));
 
-  // Weather: compute per-month averages with separate heat + rain scores
-  const weatherByMonth = MONTH_LABELS.map((label, i) => {
-    const rows = (weatherData ?? []).filter((w: any) => w.month === i + 1);
-    if (!rows.length) return { month: label, rainScore: null, heatScore: null, avgTemp: null, avgPrecip: null };
-    const avgTemp  = rows.reduce((s: number, w: any) => s + (w.temp_avg_f ?? 0), 0) / rows.length;
-    const avgPrecip= rows.reduce((s: number, w: any) => s + (w.precipitation_inches ?? 0), 0) / rows.length;
-    return {
-      month: label,
-      rainScore: rainScore(avgPrecip),
-      heatScore: heatScore(avgTemp),
-      avgTemp: Math.round(avgTemp),
-      avgPrecip: Math.round(avgPrecip * 10) / 10,
-    };
-  });
+  const weatherByMonth = weatherData?.monthly ?? [];
 
   return (
     <div className="max-w-6xl space-y-8">
@@ -166,39 +141,51 @@ export default function MacroPage() {
       )}
 
       {/* ── WEATHER SEASONALITY (heat + rain split) ── */}
-      {weatherByMonth.some((m) => m.rainScore !== null) && (
+      {weatherByMonth.some((m: any) => m.avgRainScore !== null) && (
         <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-5">
           <div>
             <h2 className="text-base font-semibold text-gray-900 mb-0.5">Weather seasonality</h2>
             <p className="text-xs text-gray-400">
-              10-year monthly averages. 0 = no risk, 10 = high risk for outdoor events.
+              3-year monthly averages. 0 = no risk, 10 = high risk for outdoor events.
+              Trend arrows show whether risk is rising ↑ or falling ↓ across those years.
             </p>
           </div>
 
           {/* Rain score */}
           <div>
             <p className="text-xs font-medium text-gray-600 mb-2">
-              Rain risk — <span className="font-normal text-gray-400">monthly precipitation (0 = dry, 10 = 5"+ avg)</span>
+              Rain risk — <span className="font-normal text-gray-400">0 = dry, 10 = 5"+ monthly avg</span>
             </p>
             <div className="grid grid-cols-12 gap-1">
-              {weatherByMonth.map((m) => (
-                <div key={m.month} className="text-center">
-                  <div
-                    className="rounded mx-auto mb-1 flex items-center justify-center"
-                    style={{ height: 48, backgroundColor: m.rainScore !== null ? rainColor(m.rainScore) : "#e5e7eb" }}
-                  >
-                    {m.rainScore !== null && (
-                      <span className={`text-xs font-bold ${m.rainScore >= 6 ? "text-white" : "text-gray-700"}`}>
-                        {m.rainScore}
+              {weatherByMonth.map((m: any) => {
+                const t = m.rainTrend;
+                return (
+                  <div key={m.month} className="text-center">
+                    <div
+                      className="rounded mx-auto mb-0.5 flex items-center justify-center"
+                      style={{ height: 44, backgroundColor: m.avgRainScore !== null ? rainColor(m.avgRainScore) : "#e5e7eb" }}
+                    >
+                      {m.avgRainScore !== null && (
+                        <span className={`text-xs font-bold ${m.avgRainScore >= 6 ? "text-white" : "text-gray-700"}`}>
+                          {m.avgRainScore}
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-[10px] text-gray-400">{m.month}</span>
+                    {m.avgPrecip !== null && (
+                      <span className="block text-[9px] text-gray-400">{m.avgPrecip}"</span>
+                    )}
+                    {t && t !== "stable" && (
+                      <span
+                        className={`block text-xs font-bold ${t === "rising" ? "text-red-400" : "text-green-500"}`}
+                        title={t === "rising" ? "Getting wetter over past 3 years" : "Getting drier over past 3 years"}
+                      >
+                        {t === "rising" ? "↑" : "↓"}
                       </span>
                     )}
                   </div>
-                  <span className="text-[10px] text-gray-400">{m.month}</span>
-                  {m.avgPrecip !== null && (
-                    <span className="block text-[10px] text-gray-400">{m.avgPrecip}"</span>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 
@@ -208,24 +195,35 @@ export default function MacroPage() {
               Temperature discomfort — <span className="font-normal text-gray-400">0 = ideal 65–78°F, rises toward freezing or sweltering</span>
             </p>
             <div className="grid grid-cols-12 gap-1">
-              {weatherByMonth.map((m) => (
-                <div key={m.month} className="text-center">
-                  <div
-                    className="rounded mx-auto mb-1 flex items-center justify-center"
-                    style={{ height: 48, backgroundColor: m.heatScore !== null ? heatColor(m.heatScore) : "#e5e7eb" }}
-                  >
-                    {m.heatScore !== null && (
-                      <span className={`text-xs font-bold ${m.heatScore >= 6 ? "text-white" : "text-gray-700"}`}>
-                        {m.heatScore}
+              {weatherByMonth.map((m: any) => {
+                const t = m.heatTrend;
+                return (
+                  <div key={m.month} className="text-center">
+                    <div
+                      className="rounded mx-auto mb-0.5 flex items-center justify-center"
+                      style={{ height: 44, backgroundColor: m.avgHeatScore !== null ? heatColor(m.avgHeatScore) : "#e5e7eb" }}
+                    >
+                      {m.avgHeatScore !== null && (
+                        <span className={`text-xs font-bold ${m.avgHeatScore >= 6 ? "text-white" : "text-gray-700"}`}>
+                          {m.avgHeatScore}
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-[10px] text-gray-400">{m.month}</span>
+                    {m.avgTemp !== null && (
+                      <span className="block text-[9px] text-gray-400">{m.avgTemp}°F</span>
+                    )}
+                    {t && t !== "stable" && (
+                      <span
+                        className={`block text-xs font-bold ${t === "rising" ? "text-red-400" : "text-green-500"}`}
+                        title={t === "rising" ? "Temperatures becoming more extreme over past 3 years" : "Temperatures becoming more comfortable over past 3 years"}
+                      >
+                        {t === "rising" ? "↑" : "↓"}
                       </span>
                     )}
                   </div>
-                  <span className="text-[10px] text-gray-400">{m.month}</span>
-                  {m.avgTemp !== null && (
-                    <span className="block text-[10px] text-gray-400">{m.avgTemp}°F</span>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>

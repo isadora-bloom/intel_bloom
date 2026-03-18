@@ -125,7 +125,7 @@ export const macroRouter = router({
     };
   }),
 
-  // Get weather seasonality for venue's station
+  // Get weather seasonality for venue's station — 3-year averages with trend direction
   getWeatherSeasonality: venueProcedure.query(async ({ ctx }) => {
     const { data: venue } = await ctx.supabase
       .from("venues")
@@ -133,18 +133,77 @@ export const macroRouter = router({
       .eq("id", ctx.venueId)
       .single();
 
-    if (!venue?.noaa_station_id) return [];
+    if (!venue?.noaa_station_id) return null;
+
+    const threeYearsAgo = new Date().getFullYear() - 3;
 
     const { data, error } = await ctx.supabase
       .from("weather_monthly")
-      .select("year, month, precipitation_inches, temp_avg_f, weather_score")
+      .select("year, month, precipitation_inches, temp_avg_f")
       .eq("noaa_station_id", venue.noaa_station_id)
-      .order("year", { ascending: false })
-      .order("month", { ascending: true })
-      .limit(120); // 10 years
+      .gte("year", threeYearsAgo)
+      .order("year", { ascending: true })
+      .order("month", { ascending: true });
 
     if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
-    return data ?? [];
+    const rows = data ?? [];
+
+    function rainScore(p: number) { return Math.min(10, Math.round(p * 2)); }
+    function heatScore(t: number) {
+      if (t >= 65 && t <= 78) return 0;
+      if (t < 65) return Math.min(10, Math.round((65 - t) / 4));
+      return Math.min(10, Math.round((t - 78) / 2.5));
+    }
+    function trend(vals: (number | null)[]): "rising" | "falling" | "stable" | null {
+      const pts = vals.map((v, i) => ({ x: i, y: v })).filter((p): p is { x: number; y: number } => p.y !== null);
+      if (pts.length < 2) return null;
+      const n = pts.length;
+      const sx = pts.reduce((a, p) => a + p.x, 0);
+      const sy = pts.reduce((a, p) => a + p.y, 0);
+      const sxy = pts.reduce((a, p) => a + p.x * p.y, 0);
+      const sx2 = pts.reduce((a, p) => a + p.x * p.x, 0);
+      const slope = (n * sxy - sx * sy) / (n * sx2 - sx * sx);
+      if (slope > 0.3) return "rising";
+      if (slope < -0.3) return "falling";
+      return "stable";
+    }
+
+    const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    const years = [...new Set(rows.map(r => r.year))].sort();
+
+    const monthly = MONTHS.map((label, i) => {
+      const monthRows = rows.filter(r => r.month === i + 1);
+      const byYear = years.map(yr => {
+        const r = monthRows.find(row => row.year === yr);
+        const precip = r?.precipitation_inches ?? null;
+        const temp   = r?.temp_avg_f ?? null;
+        return {
+          year: yr,
+          rain: precip !== null ? rainScore(precip) : null,
+          heat: temp   !== null ? heatScore(temp)   : null,
+          precip: precip !== null ? Math.round(precip * 10) / 10 : null,
+          temp:   temp   !== null ? Math.round(temp)           : null,
+        };
+      });
+
+      const avgRain = byYear.filter(y => y.rain !== null).map(y => y.rain as number);
+      const avgHeat = byYear.filter(y => y.heat !== null).map(y => y.heat as number);
+      const avg = (arr: number[]) => arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : null;
+
+      return {
+        month: label,
+        monthNum: i + 1,
+        avgRainScore: avg(avgRain),
+        avgHeatScore: avg(avgHeat),
+        avgPrecip: avg(byYear.filter(y => y.precip !== null).map(y => Math.round(y.precip! * 10) / 10)) as number | null,
+        avgTemp:   avg(byYear.filter(y => y.temp  !== null).map(y => y.temp  as number)),
+        rainTrend: trend(byYear.map(y => y.rain)),
+        heatTrend: trend(byYear.map(y => y.heat)),
+        byYear,
+      };
+    });
+
+    return { monthly, years };
   }),
 
   // Get competitor landscape
