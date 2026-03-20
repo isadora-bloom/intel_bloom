@@ -147,18 +147,19 @@ export const macroRouter = router({
 
     if (!venue?.noaa_station_id) return null;
 
-    const threeYearsAgo = new Date().getFullYear() - 3;
-
     const { data, error } = await ctx.supabase
       .from("weather_monthly")
       .select("year, month, precipitation_inches, temp_max_f")
       .eq("noaa_station_id", venue.noaa_station_id)
-      .gte("year", threeYearsAgo)
-      .order("year", { ascending: true })
+      .order("year", { ascending: false })
       .order("month", { ascending: true });
 
     if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
-    const rows = data ?? [];
+
+    // Take the 3 most recent years of data we actually have
+    const allYears = [...new Set((data ?? []).map(r => r.year))].sort((a, b) => b - a);
+    const recentYears = new Set(allYears.slice(0, 3));
+    const rows = (data ?? []).filter(r => recentYears.has(r.year));
 
     function rainScore(p: number) { return Math.min(10, Math.round(p * 2)); }
     // Based on avg daily TMAX (afternoon peak ~3pm), not 24hr average

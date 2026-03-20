@@ -166,7 +166,7 @@ export const analyticsRouter = router({
             .gte("event_date", fromIso)
             .not("event_month", "is", null),
 
-          // Weather seasonality for this venue
+          // Weather seasonality for this venue — fetch all years, pick 3 most recent
           ctx.supabase
             .from("venues")
             .select("noaa_station_id")
@@ -178,8 +178,8 @@ export const analyticsRouter = router({
                 .from("weather_monthly")
                 .select("month, year, temp_max_f, precipitation_inches")
                 .eq("noaa_station_id", v.noaa_station_id)
-                .gte("year", fromDate.getFullYear())
-                .order("year").order("month");
+                .order("year", { ascending: false })
+                .order("month", { ascending: true });
             }),
 
           // Google Trends — all tracked terms
@@ -269,9 +269,12 @@ export const analyticsRouter = router({
         return "stable";
       }
 
-      // Build year×month lookup from raw weather rows
-      const allWeatherRows: any[] = (weatherRes as any).data ?? [];
-      const years = [...new Set(allWeatherRows.map((w: any) => w.year as number))].sort();
+      // Build year×month lookup from raw weather rows — 3 most recent years
+      const rawWeatherRows: any[] = (weatherRes as any).data ?? [];
+      const allWeatherYears = [...new Set(rawWeatherRows.map((w: any) => w.year as number))].sort((a, b) => b - a);
+      const recentWeatherYears = new Set(allWeatherYears.slice(0, 3));
+      const allWeatherRows = rawWeatherRows.filter((w: any) => recentWeatherYears.has(w.year));
+      const years = [...recentWeatherYears].sort();
 
       // weatherGrid[monthIndex] = { label, years: [{year, heatScore, rainScore, tempAvg, precip}], rainTrend, heatTrend }
       const mean = (arr: number[]) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
