@@ -27,10 +27,13 @@ export async function GET(req: NextRequest) {
   });
 
   if (!tokenRes.ok) {
-    return NextResponse.redirect(`${appUrl}/settings?email_error=1`);
+    const tokenErr = await tokenRes.text();
+    console.error("[google-callback] token exchange failed:", tokenErr);
+    return NextResponse.redirect(`${appUrl}/settings?email_error=token`);
   }
 
   const tokens = await tokenRes.json();
+  console.log("[google-callback] tokens received, refresh_token present:", !!tokens.refresh_token);
 
   // Get the user's email address to label the connection
   const userInfoRes = await fetch(
@@ -38,6 +41,7 @@ export async function GET(req: NextRequest) {
     { headers: { Authorization: `Bearer ${tokens.access_token}` } }
   );
   const userInfo = await userInfoRes.json();
+  console.log("[google-callback] userInfo email:", userInfo.email);
 
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -52,7 +56,7 @@ export async function GET(req: NextRequest) {
         provider: "google",
         email_address: userInfo.email ?? "unknown",
         access_token: tokens.access_token,
-        refresh_token: tokens.refresh_token,
+        refresh_token: tokens.refresh_token ?? null,
         token_expires_at: tokens.expires_in
           ? new Date(Date.now() + tokens.expires_in * 1000).toISOString()
           : null,
@@ -61,7 +65,8 @@ export async function GET(req: NextRequest) {
     );
 
   if (dbError) {
-    return NextResponse.redirect(`${appUrl}/settings?email_error=1`);
+    console.error("[google-callback] db upsert failed:", dbError.message, dbError.code, dbError.details);
+    return NextResponse.redirect(`${appUrl}/settings?email_error=db`);
   }
 
   return NextResponse.redirect(`${appUrl}/settings?email_connected=1`);
