@@ -3,6 +3,7 @@
 import { trpc } from "@/lib/trpc/client";
 import { useState, useRef, useEffect } from "react";
 import { type BriefingInsight } from "@/server/api/routers/insights";
+import SetupChecklist from "@/components/SetupChecklist";
 import {
   TrendingUp,
   TrendingDown,
@@ -195,6 +196,7 @@ function AskInsight() {
 
 export default function DashboardPage() {
   const { data: insights, isLoading } = trpc.insights.getBriefing.useQuery(undefined, { staleTime: 1000 * 60 * 5 });
+  const { data: venue } = trpc.venues.getCurrent.useQuery();
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
 
@@ -204,6 +206,7 @@ export default function DashboardPage() {
         <h1 className="text-2xl font-semibold text-gray-900">{greeting}</h1>
         <p className="text-sm text-gray-500 mt-0.5">Here&apos;s what your data is telling you today.</p>
       </div>
+      {venue && <SetupChecklist venueId={venue.id} />}
       <AskInsight />
 
       {isLoading && (

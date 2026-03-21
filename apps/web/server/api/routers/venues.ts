@@ -54,4 +54,64 @@ export const venuesRouter = router({
       if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
       return data;
     }),
+
+  // Returns everything the setup checklist needs
+  getChecklistStatus: venueProcedure.query(async ({ ctx }) => {
+    const [venueRes, emailRes, clientRes, teamRes] = await Promise.all([
+      ctx.supabase.from("venues")
+        .select("funnel_config, venue_profile, calendly_api_key, briefing_email, city, state, name")
+        .eq("id", ctx.venueId).single(),
+      ctx.supabase.from("email_connections").select("id").eq("venue_id", ctx.venueId).limit(1),
+      ctx.supabase.from("clients").select("id", { count: "exact", head: true }).eq("venue_id", ctx.venueId),
+      ctx.supabase.from("venue_users").select("id", { count: "exact", head: true }).eq("venue_id", ctx.venueId),
+    ]);
+    return {
+      funnelConfig: (venueRes.data?.funnel_config ?? {}) as Record<string, any>,
+      venueProfile: (venueRes.data?.venue_profile ?? {}) as Record<string, any>,
+      calendlyConnected: !!venueRes.data?.calendly_api_key,
+      briefingEmail: venueRes.data?.briefing_email ?? null,
+      emailConnected: (emailRes.data?.length ?? 0) > 0,
+      clientCount: clientRes.count ?? 0,
+      teamCount: teamRes.count ?? 1,
+      city: venueRes.data?.city ?? null,
+      state: venueRes.data?.state ?? null,
+      venueName: venueRes.data?.name ?? null,
+    };
+  }),
+
+  // Merges partial funnel/profile data
+  saveOnboardingSection: venueProcedure
+    .input(z.object({
+      funnelConfig: z.record(z.unknown()).optional(),
+      venueProfile: z.record(z.unknown()).optional(),
+      calendlyApiKey: z.string().optional(),
+      briefingEmail: z.string().email().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const { data: existing } = await ctx.supabase
+        .from("venues").select("funnel_config, venue_profile").eq("id", ctx.venueId).single();
+      const updates: Record<string, unknown> = {};
+      if (input.funnelConfig)
+        updates.funnel_config = { ...(existing?.funnel_config ?? {}), ...input.funnelConfig };
+      if (input.venueProfile)
+        updates.venue_profile = { ...(existing?.venue_profile ?? {}), ...input.venueProfile };
+      if (input.calendlyApiKey !== undefined) updates.calendly_api_key = input.calendlyApiKey || null;
+      if (input.briefingEmail !== undefined) updates.briefing_email = input.briefingEmail;
+      const { error } = await ctx.supabase.from("venues").update(updates).eq("id", ctx.venueId);
+      if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
+      return { ok: true };
+    }),
+
+  // Creates a venue invite
+  inviteTeamMember: venueProcedure
+    .input(z.object({ email: z.string().email(), role: z.enum(["admin", "member"]).default("member") }))
+    .mutation(async ({ ctx, input }) => {
+      const { data: { user } } = await ctx.supabase.auth.getUser();
+      const { error } = await ctx.supabase.from("venue_invites").upsert(
+        { venue_id: ctx.venueId, email: input.email, role: input.role, invited_by: user?.id },
+        { onConflict: "venue_id,email", ignoreDuplicates: false }
+      );
+      if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
+      return { ok: true };
+    }),
 });
