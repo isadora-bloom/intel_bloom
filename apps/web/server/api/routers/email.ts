@@ -147,11 +147,25 @@ Body: ${e.body}
 Return a JSON array of exactly ${emails.length} objects in this order, one per email:
 [{ "is_wedding_related": bool, "name": str|null, "event_date": str|null, "source": str|null, "source_quote": str|null, "guest_count": int|null, "summary": str }, ...]`;
 
-  const response = await anthropic.messages.create({
-    model: "claude-sonnet-4-6",
-    max_tokens: 2000,
-    messages: [{ role: "user", content: prompt }],
-  });
+  // Retry up to 3 times with exponential backoff on overload (529)
+  let response;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      response = await anthropic.messages.create({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 1500,
+        messages: [{ role: "user", content: prompt }],
+      });
+      break;
+    } catch (err: any) {
+      if ((err?.status === 529 || err?.status === 429) && attempt < 2) {
+        await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
+      } else {
+        throw err;
+      }
+    }
+  }
+  if (!response) throw new Error("Claude unavailable after retries");
 
   const text = response.content[0].type === "text" ? response.content[0].text : "[]";
 
@@ -512,12 +526,19 @@ export const emailRouter = router({
       }
 
       // Fetch message details in parallel — cap at maxEmails, batched to avoid rate limits
-      const toFetch = newIds.slice(0, input.maxEmails);
-      const messageDetails = await Promise.all(
-        toFetch.map((id) =>
-          gmailGet(token, `messages/${id}?format=full`).catch(() => null)
-        )
-      );
+      // Process at most 50 per run — subsequent scans pick up the next batch
+      const toFetch = newIds.slice(0, 50);
+
+      // Fetch email details in small concurrent batches to avoid Gmail rate limits
+      const messageDetails: any[] = [];
+      const GMAIL_BATCH = 10;
+      for (let i = 0; i < toFetch.length; i += GMAIL_BATCH) {
+        const chunk = toFetch.slice(i, i + GMAIL_BATCH);
+        const results = await Promise.all(
+          chunk.map((id) => gmailGet(token, `messages/${id}?format=full`).catch(() => null))
+        );
+        messageDetails.push(...results);
+      }
 
       // Build email objects for Claude
       const emailBatch = messageDetails
@@ -536,8 +557,8 @@ export const emailRouter = router({
         })
         .filter((e) => e.body.length > 20); // skip empty/unreadable messages
 
-      // Extract in batches of 10 (Claude handles ~10 emails per call well)
-      const BATCH = 10;
+      // Extract in batches of 5 to stay within token limits and avoid overload
+      const BATCH = 5;
       const allExtractions: Array<EmailExtraction & {
         messageId: string;
         threadId: string;
