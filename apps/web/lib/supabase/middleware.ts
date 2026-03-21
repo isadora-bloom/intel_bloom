@@ -29,10 +29,15 @@ export async function updateSession(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
+  const pathname = request.nextUrl.pathname;
+
   const isAuthRoute =
-    request.nextUrl.pathname.startsWith("/login") ||
-    request.nextUrl.pathname.startsWith("/onboard") ||
-    request.nextUrl.pathname.startsWith("/api/");
+    pathname.startsWith("/login") ||
+    pathname.startsWith("/signup") ||
+    pathname.startsWith("/onboard") ||
+    pathname.startsWith("/invite") ||
+    pathname.startsWith("/api/") ||
+    pathname.startsWith("/upgrade");
 
   if (!user && !isAuthRoute) {
     const url = request.nextUrl.clone();
@@ -40,10 +45,47 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  if (user && request.nextUrl.pathname === "/login") {
+  if (user && pathname === "/login") {
     const url = request.nextUrl.clone();
     url.pathname = "/dashboard";
     return NextResponse.redirect(url);
+  }
+
+  // Plan gating — only run for authenticated users on dashboard routes
+  if (user) {
+    const isDashboardRoute =
+      !pathname.startsWith("/login") &&
+      !pathname.startsWith("/signup") &&
+      !pathname.startsWith("/onboard") &&
+      !pathname.startsWith("/invite") &&
+      !pathname.startsWith("/api/") &&
+      !pathname.startsWith("/upgrade");
+
+    if (isDashboardRoute) {
+      const { data: venueData } = await supabase
+        .from("venue_users")
+        .select("venues(plan_status, trial_ends_at)")
+        .eq("user_id", user.id)
+        .limit(1)
+        .single();
+
+      const venue = (venueData?.venues as any) ?? null;
+
+      if (venue) {
+        const isTrialExpired =
+          venue.plan_status === "trial" &&
+          venue.trial_ends_at &&
+          new Date(venue.trial_ends_at) < new Date();
+
+        const isCancelled = venue.plan_status === "cancelled";
+
+        if (isTrialExpired || isCancelled) {
+          const url = request.nextUrl.clone();
+          url.pathname = "/upgrade";
+          return NextResponse.redirect(url);
+        }
+      }
+    }
   }
 
   return supabaseResponse;

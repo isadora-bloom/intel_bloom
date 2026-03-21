@@ -107,11 +107,75 @@ export const venuesRouter = router({
     .input(z.object({ email: z.string().email(), role: z.enum(["admin", "member"]).default("member") }))
     .mutation(async ({ ctx, input }) => {
       const { data: { user } } = await ctx.supabase.auth.getUser();
-      const { error } = await ctx.supabase.from("venue_invites").upsert(
+
+      const { data: upserted, error } = await ctx.supabase.from("venue_invites").upsert(
         { venue_id: ctx.venueId, email: input.email, role: input.role, invited_by: user?.id },
         { onConflict: "venue_id,email", ignoreDuplicates: false }
-      );
+      ).select("token").single();
+
       if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
+
+      // Send invite email via Resend
+      const resendApiKey = process.env.RESEND_API_KEY;
+      if (!resendApiKey) {
+        console.warn("[inviteTeamMember] RESEND_API_KEY not set — skipping invite email");
+      } else {
+        const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+        const token = upserted?.token;
+
+        if (token) {
+          // Fetch venue name for the email
+          const { data: venueData } = await ctx.supabase
+            .from("venues")
+            .select("name")
+            .eq("id", ctx.venueId)
+            .single();
+          const venueName = venueData?.name ?? "your venue";
+
+          const inviteUrl = `${appUrl}/invite/${token}`;
+          const fromEmail = process.env.BRIEFING_FROM_EMAIL ?? "invites@bloomhq.co";
+
+          const emailRes = await fetch("https://api.resend.com/emails", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${resendApiKey}`,
+            },
+            body: JSON.stringify({
+              from: fromEmail,
+              to: input.email,
+              subject: `You've been invited to join ${venueName} on Bloom Intelligence`,
+              html: `
+                <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px 24px; color: #111827;">
+                  <h2 style="font-size: 20px; font-weight: 600; margin-bottom: 8px;">You've been invited</h2>
+                  <p style="font-size: 15px; color: #374151; margin-bottom: 24px;">
+                    You've been invited to join <strong>${venueName}</strong> on Bloom Intelligence.
+                  </p>
+                  <a
+                    href="${inviteUrl}"
+                    style="display: inline-block; background: #2563eb; color: #ffffff; text-decoration: none; padding: 12px 24px; border-radius: 6px; font-size: 14px; font-weight: 500;"
+                  >
+                    Accept invitation
+                  </a>
+                  <p style="font-size: 13px; color: #6b7280; margin-top: 24px;">
+                    Or copy this link: <a href="${inviteUrl}" style="color: #2563eb;">${inviteUrl}</a>
+                  </p>
+                  <p style="font-size: 12px; color: #9ca3af; margin-top: 32px;">
+                    This link expires in 7 days. If you weren't expecting this invitation, you can ignore this email.
+                  </p>
+                </div>
+              `,
+            }),
+          });
+
+          if (!emailRes.ok) {
+            const emailErr = await emailRes.text();
+            console.error("[inviteTeamMember] Resend failed:", emailErr);
+            // Non-fatal — invite was created, email just didn't send
+          }
+        }
+      }
+
       return { ok: true };
     }),
 });

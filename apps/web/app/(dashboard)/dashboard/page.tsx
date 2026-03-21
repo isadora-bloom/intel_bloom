@@ -2,8 +2,10 @@
 
 import { trpc } from "@/lib/trpc/client";
 import { useState, useRef, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import { type BriefingInsight } from "@/server/api/routers/insights";
 import SetupChecklist from "@/components/SetupChecklist";
+import HoldAlertsWidget from "@/components/HoldAlertsWidget";
 import {
   TrendingUp,
   TrendingDown,
@@ -22,6 +24,7 @@ import {
   Radio,
   Telescope,
   Sparkles,
+  X,
 } from "lucide-react";
 
 const SENTIMENT_STYLES: Record<
@@ -200,12 +203,31 @@ export default function DashboardPage() {
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
 
+  const searchParams = useSearchParams();
+  const [upgradedBannerVisible, setUpgradedBannerVisible] = useState(
+    () => searchParams.get("upgraded") === "1"
+  );
+
   return (
     <div className="max-w-3xl space-y-6">
+      {upgradedBannerVisible && (
+        <div className="flex items-center justify-between gap-3 bg-green-50 border border-green-200 text-green-800 text-sm font-medium rounded-xl px-4 py-3">
+          <span>Welcome to Bloom Intelligence! Your subscription is active.</span>
+          <button
+            onClick={() => setUpgradedBannerVisible(false)}
+            className="flex-shrink-0 text-green-600 hover:text-green-800 transition-colors"
+            aria-label="Dismiss"
+          >
+            <X size={15} />
+          </button>
+        </div>
+      )}
+
       <div>
         <h1 className="text-2xl font-semibold text-gray-900">{greeting}</h1>
         <p className="text-sm text-gray-500 mt-0.5">Here&apos;s what your data is telling you today.</p>
       </div>
+      <HoldAlertsWidget />
       {venue && <SetupChecklist venueId={venue.id} />}
       <AskInsight />
 
@@ -221,7 +243,28 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {!isLoading && insights && (
+      {!isLoading && insights && insights.length === 0 && (
+        <div className="border border-dashed border-gray-200 rounded-xl p-12 text-center">
+          <div className="w-12 h-12 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-4">
+            <Sparkles size={22} className="text-blue-500" />
+          </div>
+          <h3 className="text-sm font-semibold text-gray-900 mb-2">Your intelligence is warming up</h3>
+          <p className="text-sm text-gray-500 max-w-sm mx-auto mb-5">
+            Connect your Gmail to scan inquiry history, then Bloom will surface patterns,
+            anomalies, and opportunities here.
+          </p>
+          <div className="flex flex-col sm:flex-row gap-2 justify-center">
+            <a href="/settings" className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700">
+              Connect Gmail
+            </a>
+            <a href="/analytics" className="inline-flex items-center gap-1.5 px-4 py-2 border border-gray-200 text-gray-700 text-sm font-medium rounded-lg hover:border-gray-400">
+              View analytics
+            </a>
+          </div>
+        </div>
+      )}
+
+      {!isLoading && insights && insights.length > 0 && (
         <div className="space-y-8">
           {(["past", "present", "future", "recommendation"] as const).map((tf) => {
             const section = insights.filter(i => i.timeframe === tf && i.dataAvailable);

@@ -10,7 +10,7 @@ CREATE TABLE email_connections (
   provider          TEXT NOT NULL DEFAULT 'google',
   email_address     TEXT NOT NULL,
   access_token      TEXT,
-  refresh_token     TEXT NOT NULL,
+  refresh_token     TEXT,
   token_expires_at  TIMESTAMPTZ,
   created_at        TIMESTAMPTZ DEFAULT NOW(),
   last_synced_at    TIMESTAMPTZ,

@@ -14,6 +14,7 @@ import {
   GitMerge,
   LogOut,
   ScanLine,
+  DownloadCloud,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
@@ -29,6 +30,7 @@ const NAV_ITEMS = [
   { href: "/macro", label: "Market Pulse", icon: Globe },
   { href: "/vendors", label: "Vendors", icon: Store },
   { href: "/annotations", label: "Annotations", icon: Flag },
+  { href: "/import", label: "Import", icon: DownloadCloud },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
