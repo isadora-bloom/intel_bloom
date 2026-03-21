@@ -532,4 +532,231 @@ export const analyticsRouter = router({
           avgRevenue: Math.round(stats.totalRevenue / stats.count),
         }));
     }),
+
+  // Booking horizon — how far in advance couples book
+  getBookingHorizon: venueProcedure.query(async ({ ctx }) => {
+    const { data, error } = await ctx.supabase
+      .from("clients")
+      .select("inquired_at, event_date, status")
+      .eq("venue_id", ctx.venueId)
+      .not("inquired_at", "is", null)
+      .not("event_date", "is", null)
+      .not("status", "in", '("inquiry","archived")');
+
+    if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
+
+    const rows = data ?? [];
+    const daysList: number[] = [];
+
+    for (const row of rows) {
+      const inquiry = new Date(row.inquired_at as string);
+      const event = new Date(row.event_date as string);
+      const days = Math.round((event.getTime() - inquiry.getTime()) / 86400000);
+      if (days >= 0) daysList.push(days);
+    }
+
+    daysList.sort((a, b) => a - b);
+
+    const total = daysList.length;
+
+    const buckets: { label: string; min: number; max: number }[] = [
+      { label: "Under 6 months", min: 0, max: 179 },
+      { label: "6–12 months", min: 180, max: 364 },
+      { label: "12–18 months", min: 365, max: 546 },
+      { label: "18–24 months", min: 547, max: 729 },
+      { label: "Over 24 months", min: 730, max: Infinity },
+    ];
+
+    const bucketCounts = buckets.map((b) => ({
+      label: b.label,
+      count: daysList.filter((d) => d >= b.min && d <= b.max).length,
+    }));
+
+    const result = bucketCounts.map((b) => ({
+      label: b.label,
+      count: b.count,
+      pct: total > 0 ? Math.round((b.count / total) * 1000) / 10 : 0,
+    }));
+
+    const p = (pct: number) =>
+      daysList.length > 0 ? daysList[Math.floor(daysList.length * pct)] ?? null : null;
+
+    return {
+      buckets: result,
+      median: p(0.5),
+      p25: p(0.25),
+      p75: p(0.75),
+    };
+  }),
+
+  // Capacity outlook — contracted events + scheduled tours per month for 18 months
+  getCapacityOutlook: venueProcedure.query(async ({ ctx }) => {
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const monthStartIso = monthStart.toISOString().split("T")[0];
+
+    const [clientsRes, toursRes] = await Promise.all([
+      ctx.supabase
+        .from("clients")
+        .select("event_date, status")
+        .eq("venue_id", ctx.venueId)
+        .in("status", ["booked", "planning", "event_complete"])
+        .not("event_date", "is", null)
+        .gte("event_date", monthStartIso),
+      ctx.supabase
+        .from("tours")
+        .select("scheduled_at")
+        .eq("venue_id", ctx.venueId)
+        .eq("cancelled", false)
+        .not("scheduled_at", "is", null)
+        .gte("scheduled_at", monthStart.toISOString()),
+    ]);
+
+    if (clientsRes.error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: clientsRes.error.message });
+    if (toursRes.error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: toursRes.error.message });
+
+    // Build map for next 18 months
+    const months: { month: string; contractedEvents: number; scheduledTours: number }[] = [];
+    for (let i = 0; i < 18; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      months.push({ month: key, contractedEvents: 0, scheduledTours: 0 });
+    }
+
+    const monthMap = new Map(months.map((m) => [m.month, m]));
+
+    for (const client of clientsRes.data ?? []) {
+      const d = new Date(client.event_date as string);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      const entry = monthMap.get(key);
+      if (entry) entry.contractedEvents++;
+    }
+
+    for (const tour of toursRes.data ?? []) {
+      const d = new Date(tour.scheduled_at as string);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      const entry = monthMap.get(key);
+      if (entry) entry.scheduledTours++;
+    }
+
+    return months;
+  }),
+
+  // Response time analytics for inquiries
+  getResponseTimes: venueProcedure.query(async ({ ctx }) => {
+    const { data, error } = await ctx.supabase
+      .from("inquiries")
+      .select("response_time_minutes, day_of_week")
+      .eq("venue_id", ctx.venueId)
+      .not("response_time_minutes", "is", null);
+
+    if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
+
+    const rows = data ?? [];
+    const times = rows.map((r: any) => r.response_time_minutes as number).sort((a, b) => a - b);
+    const total = times.length;
+
+    if (total === 0) {
+      return {
+        avg: null, median: null,
+        under5min: 0, under1hr: 0, under24hr: 0, over24hr: 0,
+        total: 0,
+        byDayOfWeek: Array.from({ length: 7 }, (_, day) => ({ day, avgMinutes: null })),
+      };
+    }
+
+    const avg = Math.round(times.reduce((a, b) => a + b, 0) / total);
+    const median = times[Math.floor(total / 2)];
+    const under5min = times.filter((t) => t < 5).length;
+    const under1hr = times.filter((t) => t < 60).length;
+    const under24hr = times.filter((t) => t < 1440).length;
+    const over24hr = times.filter((t) => t >= 1440).length;
+
+    // Average by day of week
+    const dowAccum: number[][] = Array.from({ length: 7 }, () => []);
+    for (const row of rows) {
+      const dow = (row as any).day_of_week as number | null;
+      const rt = (row as any).response_time_minutes as number;
+      if (dow != null && dow >= 0 && dow < 7) dowAccum[dow].push(rt);
+    }
+
+    const byDayOfWeek = dowAccum.map((vals, day) => ({
+      day,
+      avgMinutes: vals.length > 0 ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null,
+    }));
+
+    return { avg, median, under5min, under1hr, under24hr, over24hr, total, byDayOfWeek };
+  }),
+
+  // Revenue projection — actual past 12 months + projected next 12 months
+  getRevenueProjection: venueProcedure.query(async ({ ctx }) => {
+    const now = new Date();
+    const past12Start = new Date(now.getFullYear(), now.getMonth() - 11, 1);
+    const future12End = new Date(now.getFullYear(), now.getMonth() + 12, 1);
+
+    const bucketToMidpointCents: Record<string, number> = {
+      "Under $5k": 250000, "$5–10k": 750000, "$10–15k": 1250000,
+      "$15–20k": 1750000, "$20–30k": 2500000, "$30k+": 3500000,
+    };
+
+    const [clientsRes, venueRes] = await Promise.all([
+      ctx.supabase
+        .from("clients")
+        .select("event_date, revenue_cents, status")
+        .eq("venue_id", ctx.venueId)
+        .in("status", ["booked", "planning", "event_complete"])
+        .not("event_date", "is", null)
+        .gte("event_date", past12Start.toISOString().split("T")[0])
+        .lte("event_date", future12End.toISOString().split("T")[0]),
+      ctx.supabase
+        .from("venues")
+        .select("venue_profile")
+        .eq("id", ctx.venueId)
+        .single(),
+    ]);
+
+    if (clientsRes.error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: clientsRes.error.message });
+
+    const vp = (venueRes.data?.venue_profile as Record<string, any>) ?? {};
+    const estimatedRevCents = bucketToMidpointCents[vp.avg_package_value_bucket?.value] ?? null;
+
+    // Build 24-month period array
+    const periodMap = new Map<string, { actualRevenue: number; projectedRevenue: number; isProjection: boolean; eventCount: number }>();
+    const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+
+    // Past 12 months
+    for (let i = -11; i <= 12; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      const isProjection = key > currentMonthKey;
+      periodMap.set(key, { actualRevenue: 0, projectedRevenue: 0, isProjection, eventCount: 0 });
+    }
+
+    let totalContractedRevenue = 0;
+    let totalProjectedRevenue = 0;
+
+    for (const client of clientsRes.data ?? []) {
+      const d = new Date(client.event_date as string);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      const entry = periodMap.get(key);
+      if (!entry) continue;
+
+      entry.eventCount++;
+      const rev = (client.revenue_cents as number | null) ?? estimatedRevCents ?? 0;
+
+      if (entry.isProjection) {
+        entry.projectedRevenue += rev;
+        totalProjectedRevenue += rev;
+      } else {
+        entry.actualRevenue += rev;
+        totalContractedRevenue += rev;
+      }
+    }
+
+    const months = Array.from(periodMap.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([period, data]) => ({ period, ...data }));
+
+    return { months, totalContractedRevenue, totalProjectedRevenue };
+  }),
 });

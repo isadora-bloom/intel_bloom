@@ -11,6 +11,7 @@ import { vendorsRouter } from "./routers/vendors";
 import { insightsRouter } from "./routers/insights";
 import { captureRouter } from "./routers/capture";
 import { emailRouter } from "./routers/email";
+import { calendlyRouter } from "./routers/calendly";
 
 export const appRouter = router({
   venues: venuesRouter,
@@ -25,6 +26,7 @@ export const appRouter = router({
   insights: insightsRouter,
   capture: captureRouter,
   email: emailRouter,
+  calendly: calendlyRouter,
 });
 
 export type AppRouter = typeof appRouter;
