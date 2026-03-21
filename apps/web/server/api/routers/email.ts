@@ -485,21 +485,18 @@ export const emailRouter = router({
         (existingExtractions ?? []).map((e: any) => e.gmail_message_id)
       );
 
-      // Search Gmail for wedding-related emails — search all mail, not just inbox
-      const query = encodeURIComponent(
-        `(wedding OR "venue inquiry" OR "tour request" OR "date available" OR ` +
-        `"The Knot" OR "WeddingWire" OR "Zola" OR "found you" OR "found your venue" OR ` +
-        `"saw you on" OR "recommended by" OR "referred by" OR "interested in" OR ` +
-        `"availability" OR "book your venue" OR "your venue") ` +
-        `newer_than:${input.daysBack}d`
-      );
+      // Search Gmail — all mail, no keyword filter (venue inbox is mostly wedding-related)
+      // Use pagination to collect up to maxEmails results
+      const query = encodeURIComponent(`newer_than:${input.daysBack}d -from:me`);
 
-      const listData = await gmailGet(
-        token,
-        `messages?q=${query}&maxResults=${input.maxEmails}`
-      );
-
-      const messageIds: string[] = (listData.messages ?? []).map((m: any) => m.id);
+      const messageIds: string[] = [];
+      let pageToken: string | undefined;
+      do {
+        const url = `messages?q=${query}&maxResults=500${pageToken ? `&pageToken=${pageToken}` : ""}`;
+        const listData = await gmailGet(token, url);
+        for (const m of listData.messages ?? []) messageIds.push(m.id);
+        pageToken = listData.nextPageToken;
+      } while (pageToken && messageIds.length < input.maxEmails);
       const newIds = messageIds.filter((id) => !alreadyScanned.has(id));
 
       if (newIds.length === 0) {
