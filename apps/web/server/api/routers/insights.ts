@@ -43,7 +43,7 @@ export const insightsRouter = router({
 
     const { data: venue } = await ctx.supabase
       .from("venues")
-      .select("noaa_station_id, google_trends_metro, fed_district, state, name")
+      .select("noaa_station_id, google_trends_metro, fed_district, state, name, funnel_config, venue_profile")
       .eq("id", ctx.venueId)
       .single();
 
@@ -844,7 +844,7 @@ export const insightsRouter = router({
       // Fetch venue first (needed for conditional queries below)
       const { data: venue } = await ctx.supabase
         .from("venues")
-        .select("name, city, state, noaa_station_id, google_trends_metro, fed_district")
+        .select("name, city, state, noaa_station_id, google_trends_metro, fed_district, funnel_config, venue_profile")
         .eq("id", ctx.venueId)
         .single();
 
@@ -973,6 +973,13 @@ export const insightsRouter = router({
         };
       }
 
+      // Extract venue_profile economics with estimated fallbacks
+      const vp: Record<string, any> = (venue?.venue_profile as Record<string, any>) ?? {};
+      const fc: Record<string, any> = (venue?.funnel_config as Record<string, any>) ?? {};
+      const estimatedPackageValue = vp.avg_package_value_bucket?.value ?? null;
+      const estimatedAdSpend = vp.monthly_ad_spend_bucket?.value ?? null;
+      const estimatedToursToBook = vp.typical_tours_per_booking_bucket?.value ?? null;
+
       const context = {
         venue: {
           name: venue?.name,
@@ -980,6 +987,18 @@ export const insightsRouter = router({
           noaa_station: venue?.noaa_station_id,
           metro: venue?.google_trends_metro,
           fed_district: venue?.fed_district,
+        },
+        funnel: {
+          awareness_channels: fc.awareness_channels ?? [],
+          first_touch_methods: fc.first_touch_methods ?? [],
+          tour_method: fc.tour_method ?? null,
+          contract_method: fc.contract_method ?? null,
+        },
+        economics_estimates: {
+          avg_package_value: estimatedPackageValue,
+          monthly_ad_spend: estimatedAdSpend,
+          tours_per_booking: estimatedToursToBook,
+          note: estimatedPackageValue ? "venue estimates — will be refined as real data accumulates" : "not yet provided",
         },
         clients: {
           total: totalClients,

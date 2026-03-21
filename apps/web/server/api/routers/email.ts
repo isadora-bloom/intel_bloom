@@ -122,11 +122,16 @@ interface EmailExtraction {
 }
 
 async function extractFromEmails(
-  emails: Array<{ messageId: string; from: string; subject: string; body: string; date: string }>
+  emails: Array<{ messageId: string; from: string; subject: string; body: string; date: string }>,
+  venueCtx: { venueName: string; awarenessChannels: string[] } = { venueName: "the venue", awarenessChannels: [] }
 ): Promise<EmailExtraction[]> {
   if (emails.length === 0) return [];
 
-  const prompt = `You are processing emails received by a wedding venue (Rixey Manor). This is a dedicated venue inbox — almost every email is wedding-related.
+  const channelHint = venueCtx.awarenessChannels.length > 0
+    ? `\nThis venue primarily receives inquiries from: ${venueCtx.awarenessChannels.join(", ")}. Prioritize recognizing these platforms when extracting source attribution.`
+    : "";
+
+  const prompt = `You are processing emails received by a wedding venue (${venueCtx.venueName}). This is a dedicated venue inbox — almost every email is wedding-related.${channelHint}
 
 Mark is_wedding_related = true for ALL of these:
 - Inquiry or tour request notifications from The Knot, WeddingWire, Zola, or any platform ("X is waiting to hear back from you", "New Inquiry", "New Lead", etc.)
@@ -502,7 +507,15 @@ export const emailRouter = router({
       daysBack: z.number().min(30).max(1825).default(730),
     }))
     .mutation(async ({ ctx, input }) => {
-      const { token, connectionId } = await getValidToken(ctx.supabase, ctx.venueId);
+      const [{ token, connectionId }, { data: venueData }] = await Promise.all([
+        getValidToken(ctx.supabase, ctx.venueId),
+        ctx.supabase.from("venues").select("name, funnel_config").eq("id", ctx.venueId).single(),
+      ]);
+      const fc = (venueData?.funnel_config as Record<string, any>) ?? {};
+      const venueCtx = {
+        venueName: venueData?.name ?? "the venue",
+        awarenessChannels: (fc.awareness_channels as string[]) ?? [],
+      };
 
       // Already-scanned message IDs so we don't re-extract
       const { data: existingExtractions } = await ctx.supabase
@@ -584,7 +597,7 @@ export const emailRouter = router({
 
       for (let i = 0; i < emailBatch.length; i += BATCH) {
         const batch = emailBatch.slice(i, i + BATCH);
-        const extracted = await extractFromEmails(batch);
+        const extracted = await extractFromEmails(batch, venueCtx);
         for (let j = 0; j < batch.length; j++) {
           allExtractions.push({
             ...extracted[j],

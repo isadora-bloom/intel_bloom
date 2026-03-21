@@ -7,6 +7,7 @@ export const analyticsRouter = router({
   sourceROI: venueProcedure
     .input(z.object({ yearFrom: z.number().int().optional(), yearTo: z.number().int().optional() }))
     .query(async ({ ctx, input }) => {
+      // Fetch clients + venue profile (for estimated revenue fallback) in parallel
       let query = ctx.supabase
         .from("clients")
         .select("resolved_source, status, revenue_cents, review_star_rating, review_left, referrals_generated, complexity_score")
@@ -16,8 +17,19 @@ export const analyticsRouter = router({
       if (input.yearFrom) query = query.gte("event_year", input.yearFrom);
       if (input.yearTo) query = query.lte("event_year", input.yearTo);
 
-      const { data, error } = await query;
+      const [{ data, error }, { data: venueData }] = await Promise.all([
+        query,
+        ctx.supabase.from("venues").select("venue_profile").eq("id", ctx.venueId).single(),
+      ]);
       if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
+
+      // Parse estimated package value from bucket for fallback display
+      const bucketToMidpointCents: Record<string, number> = {
+        "Under $5k": 2500_00, "$5–10k": 7500_00, "$10–15k": 12500_00,
+        "$15–20k": 17500_00, "$20–30k": 25000_00, "$30k+": 35000_00,
+      };
+      const vp = (venueData?.venue_profile as Record<string, any>) ?? {};
+      const estimatedRevCents = bucketToMidpointCents[vp.avg_package_value_bucket?.value] ?? null;
 
       // Aggregate by source
       const sourceMap = new Map<string, {
@@ -50,16 +62,22 @@ export const analyticsRouter = router({
         s.totalReferrals += client.referrals_generated ?? 0;
       }
 
-      return Array.from(sourceMap.entries()).map(([source, stats]) => ({
-        source,
-        inquiryCount: stats.inquiryCount,
-        bookedCount: stats.bookedCount,
-        conversionRate: stats.inquiryCount > 0 ? stats.bookedCount / stats.inquiryCount : 0,
-        avgRevenue: stats.revenueCount > 0 ? Math.round(stats.totalRevenue / stats.revenueCount) : null,
-        avgComplexityScore: stats.complexityCount > 0 ? Math.round(stats.totalComplexity / stats.complexityCount) : null,
-        reviewRate: stats.bookedCount > 0 ? stats.reviewCount / stats.bookedCount : 0,
-        totalReferrals: stats.totalReferrals,
-      }));
+      return Array.from(sourceMap.entries()).map(([source, stats]) => {
+        const realAvgRev = stats.revenueCount > 0 ? Math.round(stats.totalRevenue / stats.revenueCount) : null;
+        const avgRevenue = realAvgRev ?? estimatedRevCents;
+        const avgRevenueIsEstimate = realAvgRev === null && estimatedRevCents !== null;
+        return {
+          source,
+          inquiryCount: stats.inquiryCount,
+          bookedCount: stats.bookedCount,
+          conversionRate: stats.inquiryCount > 0 ? stats.bookedCount / stats.inquiryCount : 0,
+          avgRevenue,
+          avgRevenueIsEstimate,
+          avgComplexityScore: stats.complexityCount > 0 ? Math.round(stats.totalComplexity / stats.complexityCount) : null,
+          reviewRate: stats.bookedCount > 0 ? stats.reviewCount / stats.bookedCount : 0,
+          totalReferrals: stats.totalReferrals,
+        };
+      });
     }),
 
   // Inquiry day/time heatmap
