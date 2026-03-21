@@ -469,8 +469,8 @@ export const emailRouter = router({
   // Scan inbox — search, extract, match, store
   scan: venueProcedure
     .input(z.object({
-      maxEmails: z.number().min(10).max(200).default(100),
-      daysBack: z.number().min(30).max(730).default(365),
+      maxEmails: z.number().min(10).max(500).default(200),
+      daysBack: z.number().min(30).max(1825).default(730),
     }))
     .mutation(async ({ ctx, input }) => {
       const { token, connectionId } = await getValidToken(ctx.supabase, ctx.venueId);
@@ -485,12 +485,13 @@ export const emailRouter = router({
         (existingExtractions ?? []).map((e: any) => e.gmail_message_id)
       );
 
-      // Search Gmail for wedding-related emails
+      // Search Gmail for wedding-related emails — search all mail, not just inbox
       const query = encodeURIComponent(
         `(wedding OR "venue inquiry" OR "tour request" OR "date available" OR ` +
-        `"The Knot" OR "WeddingWire" OR "found you" OR "found your venue" OR ` +
-        `"saw you on" OR "recommended by" OR "referred by") ` +
-        `in:inbox newer_than:${input.daysBack}d`
+        `"The Knot" OR "WeddingWire" OR "Zola" OR "found you" OR "found your venue" OR ` +
+        `"saw you on" OR "recommended by" OR "referred by" OR "interested in" OR ` +
+        `"availability" OR "book your venue" OR "your venue") ` +
+        `newer_than:${input.daysBack}d`
       );
 
       const listData = await gmailGet(
@@ -513,8 +514,8 @@ export const emailRouter = router({
         };
       }
 
-      // Fetch message details in parallel (cap at 50 to avoid rate limits)
-      const toFetch = newIds.slice(0, 50);
+      // Fetch message details in parallel — cap at maxEmails, batched to avoid rate limits
+      const toFetch = newIds.slice(0, input.maxEmails);
       const messageDetails = await Promise.all(
         toFetch.map((id) =>
           gmailGet(token, `messages/${id}?format=full`).catch(() => null)

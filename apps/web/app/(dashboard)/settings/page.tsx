@@ -60,7 +60,7 @@ export default function SettingsPage() {
   }
 
   async function handleScan() {
-    const result = await scan.mutateAsync({ maxEmails: 100, daysBack: 365 });
+    const result = await scan.mutateAsync({ maxEmails: 200, daysBack: 730 });
     setScanResult(result);
     refetchEmail();
   }
