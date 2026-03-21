@@ -126,14 +126,29 @@ async function extractFromEmails(
 ): Promise<EmailExtraction[]> {
   if (emails.length === 0) return [];
 
-  const prompt = `You are extracting intelligence from wedding venue inquiry emails. For each email, extract:
-- is_wedding_related: is this an actual inquiry or tour request from a couple? (not spam, not vendor pitches)
-- name: the couple's name (first name or full name, not their email handle)
-- event_date: their wedding date if mentioned (ISO YYYY-MM-DD, or null)
-- source: where they found the venue — map to one of: the_knot | wedding_wire | instagram | facebook | google | friend_referral | direct | other | null
-- source_quote: the exact sentence where they mention how they found the venue (verbatim from the email), or null
+  const prompt = `You are processing emails received by a wedding venue (Rixey Manor). This is a dedicated venue inbox — almost every email is wedding-related.
+
+Mark is_wedding_related = true for ALL of these:
+- Inquiry or tour request notifications from The Knot, WeddingWire, Zola, or any platform ("X is waiting to hear back from you", "New Inquiry", "New Lead", etc.)
+- Direct inquiries from couples asking about availability, pricing, tours
+- Follow-ups, replies to inquiries, or couples continuing a conversation
+- Calculator submissions, contact form submissions
+- Existing client communications (payments, planning, day-of coordination)
+- Any email that mentions a wedding, event date, guest count, or ceremony
+
+Mark is_wedding_related = false ONLY for clear non-venue emails:
+- Vendor/supplier cold sales pitches with no couple involved
+- Spam or clearly irrelevant newsletters
+- Internal staff emails with no client context
+
+For each email extract:
+- is_wedding_related: bool (default true for venue inbox — only false for clear non-venue emails above)
+- name: the couple's name extracted from the email content or subject (not the platform sender name)
+- event_date: wedding date if mentioned (ISO YYYY-MM-DD, or null)
+- source: where the couple found the venue — map to: the_knot | wedding_wire | zola | instagram | facebook | google | friend_referral | direct | other | null
+- source_quote: exact sentence mentioning how they found the venue, or null
 - guest_count: number of guests if mentioned, or null
-- summary: one plain sentence describing this email (max 15 words)
+- summary: one plain sentence (max 15 words)
 
 Emails:
 ${emails.map((e, i) => `
@@ -144,7 +159,7 @@ Subject: ${e.subject}
 Body: ${e.body}
 `).join("\n---\n")}
 
-Return a JSON array of exactly ${emails.length} objects in this order, one per email:
+Return a JSON array of exactly ${emails.length} objects:
 [{ "is_wedding_related": bool, "name": str|null, "event_date": str|null, "source": str|null, "source_quote": str|null, "guest_count": int|null, "summary": str }, ...]`;
 
   // Retry up to 3 times with exponential backoff on overload (529)
@@ -526,8 +541,8 @@ export const emailRouter = router({
       }
 
       // Fetch message details in parallel — cap at maxEmails, batched to avoid rate limits
-      // Process at most 50 per run — subsequent scans pick up the next batch
-      const toFetch = newIds.slice(0, 50);
+      // Process at most 100 per run — subsequent scans pick up the next batch
+      const toFetch = newIds.slice(0, 100);
 
       // Fetch email details in small concurrent batches to avoid Gmail rate limits
       const messageDetails: any[] = [];
