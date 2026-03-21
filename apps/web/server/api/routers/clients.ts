@@ -171,6 +171,12 @@ export const clientsRouter = router({
         reviewStarRating: z.number().min(1).max(5).optional(),
         reviewText: z.string().optional(),
         referralsGenerated: z.number().int().optional(),
+        holdExpiresAt: z.string().datetime().nullable().optional(),
+        lostReason: z.enum([
+          "too_expensive", "date_taken", "chose_competitor", "no_response",
+          "not_right_fit", "budget_cut", "postponed", "unknown", "other",
+        ]).nullable().optional(),
+        lostReasonNote: z.string().max(500).nullable().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -202,6 +208,9 @@ export const clientsRouter = router({
         reviewStarRating: "review_star_rating",
         reviewText: "review_text",
         referralsGenerated: "referrals_generated",
+        holdExpiresAt: "hold_expires_at",
+        lostReason: "lost_reason",
+        lostReasonNote: "lost_reason_note",
       };
 
       for (const [key, value] of Object.entries(rest)) {

@@ -859,6 +859,7 @@ export const insightsRouter = router({
         { data: sourceSummary },
         { data: platformMetrics },
         { data: sourceSpend },
+        { data: holdAlerts },
       ] = await Promise.all([
         ctx.supabase
           .from("clients")
@@ -923,6 +924,16 @@ export const insightsRouter = router({
           .from("source_spend")
           .select("platform, annual_spend_cents, contract_start, contract_end, contract_label")
           .eq("venue_id", ctx.venueId),
+
+        // Holds expiring soon
+        ctx.supabase
+          .from("clients")
+          .select("id, name_primary, name_partner, hold_expires_at, revenue_cents, event_date")
+          .eq("venue_id", ctx.venueId)
+          .not("hold_expires_at", "is", null)
+          .gte("hold_expires_at", new Date().toISOString())
+          .order("hold_expires_at", { ascending: true })
+          .limit(10),
       ]);
 
       // Build compact context object
@@ -1026,6 +1037,16 @@ export const insightsRouter = router({
           bookings_attributed: d.bookings,
           cost_per_booking_usd: d.cost_per_booking_usd,
         })),
+        holds_expiring: (holdAlerts ?? []).map((h: any) => {
+          const expires = new Date(h.hold_expires_at);
+          const daysLeft = Math.round((expires.getTime() - Date.now()) / 86400000);
+          return {
+            name: [h.name_primary, h.name_partner].filter(Boolean).join(" & "),
+            event_date: h.event_date,
+            revenue_cents: h.revenue_cents,
+            days_left: daysLeft,
+          };
+        }),
         platform_metrics: (platformMetrics ?? []).map((m) => ({
           platform: m.platform,
           metric: m.metric_name,

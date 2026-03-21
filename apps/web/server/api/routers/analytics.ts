@@ -405,10 +405,10 @@ export const analyticsRouter = router({
   // Stage pipeline — current snapshot of how many records sit at each stage
   // and average lead times between them
   stagePipeline: venueProcedure.query(async ({ ctx }) => {
-    const [clientsRes, inquiriesRes, leadsRes, toursRes] = await Promise.all([
+    const [clientsRes, inquiriesRes, leadsRes, toursRes, venueRes] = await Promise.all([
       ctx.supabase
         .from("clients")
-        .select("status, inquired_at, toured_at, held_at, contracted_at, event_date")
+        .select("status, inquired_at, toured_at, held_at, contracted_at, event_date, hold_expires_at, revenue_cents")
         .eq("venue_id", ctx.venueId),
       ctx.supabase
         .from("inquiries")
@@ -422,12 +422,25 @@ export const analyticsRouter = router({
         .from("tours")
         .select("scheduled_at, completed, booking_conversion_days")
         .eq("venue_id", ctx.venueId),
+      ctx.supabase
+        .from("venues")
+        .select("venue_profile")
+        .eq("id", ctx.venueId)
+        .single(),
     ]);
 
     const clients = clientsRes.data ?? [];
     const inquiries = inquiriesRes.data ?? [];
     const leads = leadsRes.data ?? [];
     const tours = toursRes.data ?? [];
+
+    // Package value estimate for revenue-at-risk when revenue_cents is null
+    const bucketToMidpointCents: Record<string, number> = {
+      "Under $5k": 250000, "$5–10k": 750000, "$10–15k": 1250000,
+      "$15–20k": 1750000, "$20–30k": 2500000, "$30k+": 3500000,
+    };
+    const vp = (venueRes?.data?.venue_profile as Record<string, any>) ?? {};
+    const estimatedRevCents = bucketToMidpointCents[vp.avg_package_value_bucket?.value] ?? null;
 
     // Stage counts
     const stageCounts = {
@@ -482,6 +495,19 @@ export const analyticsRouter = router({
           (stageCounts.touring + stageCounts.hold + stageCounts.contracted + stageCounts.completed)
         : null;
 
+    // Hold expiry analysis
+    const now = new Date();
+    const in14Days = new Date(now.getTime() + 14 * 86400000);
+    const holdsWithExpiry = clients.filter(
+      (c: any) => c.hold_expires_at && new Date(c.hold_expires_at) >= now
+    );
+    const holdsExpiringSoon = holdsWithExpiry.filter(
+      (c: any) => new Date(c.hold_expires_at) <= in14Days
+    ).length;
+    const revenueAtRisk = holdsWithExpiry.reduce((sum: number, c: any) => {
+      return sum + ((c.revenue_cents as number | null) ?? estimatedRevCents ?? 0);
+    }, 0);
+
     return {
       stageCounts,
       leadTimes: {
@@ -495,7 +521,74 @@ export const analyticsRouter = router({
         inquiryToTour: inquiryToTourRate,
         tourToBook: tourToBookRate,
       },
+      holds: {
+        total: holdsWithExpiry.length,
+        expiringSoon: holdsExpiringSoon,
+        revenueAtRiskCents: revenueAtRisk,
+      },
     };
+  }),
+
+  // Hold alerts — couples on hold with expiry dates, ordered by urgency
+  getHoldAlerts: venueProcedure.query(async ({ ctx }) => {
+    const now = new Date();
+    const { data, error } = await ctx.supabase
+      .from("clients")
+      .select("id, name_primary, name_partner, event_date, revenue_cents, hold_expires_at, status")
+      .eq("venue_id", ctx.venueId)
+      .not("hold_expires_at", "is", null)
+      .gte("hold_expires_at", now.toISOString())
+      .order("hold_expires_at", { ascending: true });
+
+    if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
+
+    return (data ?? []).map((c: any) => {
+      const expires = new Date(c.hold_expires_at);
+      const daysLeft = Math.round((expires.getTime() - now.getTime()) / 86400000);
+      return {
+        id: c.id as string,
+        name: [c.name_primary, c.name_partner].filter(Boolean).join(" & "),
+        eventDate: c.event_date as string | null,
+        revenueCents: c.revenue_cents as number | null,
+        holdExpiresAt: c.hold_expires_at as string,
+        daysLeft,
+        urgent: daysLeft <= 3,
+      };
+    });
+  }),
+
+  // Lost deal analysis — archived clients by reason
+  getLostReasons: venueProcedure.query(async ({ ctx }) => {
+    const { data, error } = await ctx.supabase
+      .from("clients")
+      .select("lost_reason, lost_reason_note, revenue_cents, name_primary, name_partner, event_date")
+      .eq("venue_id", ctx.venueId)
+      .eq("status", "archived")
+      .not("lost_reason", "is", null);
+
+    if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
+
+    // Aggregate by reason
+    const reasonMap = new Map<string, { count: number; revenueLostCents: number }>();
+    for (const c of data ?? []) {
+      const r = (c.lost_reason as string) ?? "unknown";
+      if (!reasonMap.has(r)) reasonMap.set(r, { count: 0, revenueLostCents: 0 });
+      const entry = reasonMap.get(r)!;
+      entry.count++;
+      if (c.revenue_cents) entry.revenueLostCents += c.revenue_cents as number;
+    }
+
+    const total = (data ?? []).length;
+    const breakdown = Array.from(reasonMap.entries())
+      .map(([reason, s]) => ({
+        reason,
+        count: s.count,
+        pct: total > 0 ? Math.round((s.count / total) * 1000) / 10 : 0,
+        revenueLostCents: s.revenueLostCents,
+      }))
+      .sort((a, b) => b.count - a.count);
+
+    return { total, breakdown };
   }),
 
   // Revenue by year/month
