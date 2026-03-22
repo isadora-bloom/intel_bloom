@@ -3,7 +3,7 @@
 import { trpc } from "@/lib/trpc/client";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  LineChart, Line, Legend,
+  LineChart, Line, Legend, ComposedChart, ReferenceLine, Cell,
 } from "recharts";
 
 // Rain score cell: light blue (dry) → deep blue (very wet)
@@ -135,12 +135,81 @@ function days(n: number | null) {
   return `${n}d`;
 }
 
+function formatMinutes(mins: number | null | undefined): string {
+  if (mins == null) return "—";
+  if (mins < 60) return `${Math.round(mins)} min`;
+  const h = Math.floor(mins / 60);
+  const m = Math.round(mins % 60);
+  return m > 0 ? `${h} hrs ${m} min` : `${h} hrs`;
+}
+
+function formatCurrency(cents: number | null | undefined): string {
+  if (cents == null) return "—";
+  return `$${(cents / 100).toLocaleString()}`;
+}
+
+function formatDaysAsMonths(d: number | null | undefined): string {
+  if (d == null) return "—";
+  const months = Math.round(d / 30.4);
+  return `${months} mo`;
+}
+
+const MONTH_ABBR: Record<string, string> = {
+  "01": "Jan", "02": "Feb", "03": "Mar", "04": "Apr",
+  "05": "May", "06": "Jun", "07": "Jul", "08": "Aug",
+  "09": "Sep", "10": "Oct", "11": "Nov", "12": "Dec",
+};
+
+function periodToMonthAbbr(period: string): string {
+  // period format: "2025-01" → "Jan"
+  const parts = period.split("-");
+  if (parts.length >= 2) {
+    return MONTH_ABBR[parts[1]] ?? period;
+  }
+  return period;
+}
+
+const LOST_REASON_COLORS: Record<string, string> = {
+  date_taken:        "#ef4444",
+  chose_competitor:  "#f87171",
+  too_expensive:     "#fbbf24",
+  budget_cut:        "#9ca3af",
+  postponed:         "#9ca3af",
+  no_response:       "#dc2626",
+  other:             "#6b7280",
+};
+
+function lostReasonColor(reason: string): string {
+  return LOST_REASON_COLORS[reason] ?? "#6b7280";
+}
+
+function lostReasonLabel(reason: string): string {
+  const labels: Record<string, string> = {
+    date_taken:       "Date taken",
+    chose_competitor: "Chose competitor",
+    too_expensive:    "Too expensive",
+    budget_cut:       "Budget cut",
+    postponed:        "Postponed",
+    no_response:      "No response",
+    other:            "Other",
+  };
+  return labels[reason] ?? reason;
+}
+
+const CURRENT_MONTH = new Date().toISOString().slice(0, 7); // "2025-03"
+
 export default function AnalyticsPage() {
-  const { data: sourceROI }    = trpc.analytics.sourceROI.useQuery({});
-  const { data: revenue }      = trpc.analytics.revenueOverTime.useQuery({ years: 3 });
-  const { data: timelines }    = trpc.analytics.timelineBenchmarks.useQuery();
-  const { data: funnel }       = trpc.analytics.funnelSeasonality.useQuery({ years: 3 });
-  const { data: pipeline }     = trpc.analytics.stagePipeline.useQuery();
+  const { data: sourceROI }         = trpc.analytics.sourceROI.useQuery({});
+  const { data: revenue }           = trpc.analytics.revenueOverTime.useQuery({ years: 3 });
+  const { data: timelines }         = trpc.analytics.timelineBenchmarks.useQuery();
+  const { data: funnel }            = trpc.analytics.funnelSeasonality.useQuery({ years: 3 });
+  const { data: pipeline }          = trpc.analytics.stagePipeline.useQuery();
+  const { data: holdAlerts }        = trpc.analytics.getHoldAlerts.useQuery();
+  const { data: lostReasons }       = trpc.analytics.getLostReasons.useQuery();
+  const { data: bookingHorizon }    = trpc.analytics.getBookingHorizon.useQuery();
+  const { data: capacityOutlook }   = trpc.analytics.getCapacityOutlook.useQuery();
+  const { data: responseTimes }     = trpc.analytics.getResponseTimes.useQuery();
+  const { data: revenueProjection } = trpc.analytics.getRevenueProjection.useQuery();
 
   const funnelMonths = funnel?.months ?? [];
   const hasFunnelData = funnelMonths.some(
@@ -148,6 +217,11 @@ export default function AnalyticsPage() {
   );
   const hasWeatherData = (funnel?.weatherGrid ?? []).some(g =>
     g.years.some((y: any) => y.rainScore !== null || y.heatScore !== null)
+  );
+
+  // Trim capacity outlook to only rows with actual data
+  const trimmedCapacity = (capacityOutlook ?? []).filter(
+    (row: any) => row.contractedEvents > 0 || row.scheduledTours > 0
   );
 
   return (
@@ -222,6 +296,58 @@ export default function AnalyticsPage() {
           </div>
         </div>
       )}
+
+      {/* ── HOLDS & PIPELINE ── */}
+      <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <h2 className="text-base font-semibold text-gray-900 mb-1">Holds &amp; pipeline</h2>
+        <p className="text-xs text-gray-400 mb-4">
+          Active holds with upcoming expiry dates. Reach out before they lapse.
+        </p>
+        {holdAlerts && holdAlerts.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="text-xs text-gray-500 uppercase border-b border-gray-200">
+                <tr>
+                  <th className="text-left py-2 pr-4">Couple</th>
+                  <th className="text-right py-2 pr-4">Event date</th>
+                  <th className="text-right py-2 pr-4">Revenue</th>
+                  <th className="text-right py-2 pr-4">Hold expires</th>
+                  <th className="text-right py-2">Days left</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {holdAlerts.map((row: any) => (
+                  <tr
+                    key={row.id}
+                    className={row.urgent
+                      ? "bg-red-50 hover:bg-red-100"
+                      : row.daysLeft <= 7
+                      ? "bg-amber-50 hover:bg-amber-100"
+                      : "hover:bg-gray-50"
+                    }
+                  >
+                    <td className="py-2.5 pr-4 font-medium text-gray-900">{row.name}</td>
+                    <td className="text-right py-2.5 pr-4 text-gray-600">
+                      {new Date(row.eventDate).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
+                    </td>
+                    <td className="text-right py-2.5 pr-4 text-gray-600">
+                      {formatCurrency(row.revenueCents)}
+                    </td>
+                    <td className="text-right py-2.5 pr-4 text-gray-600">
+                      {new Date(row.holdExpiresAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                    </td>
+                    <td className={`text-right py-2.5 font-medium ${row.urgent ? "text-red-600" : row.daysLeft <= 7 ? "text-amber-600" : "text-gray-700"}`}>
+                      {row.daysLeft}d
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="text-sm text-gray-400 text-center py-4">No active holds</p>
+        )}
+      </div>
 
       {/* ── FUNNEL SEASONALITY ── */}
       <div className="bg-white rounded-lg border border-gray-200 p-6">
@@ -402,6 +528,57 @@ export default function AnalyticsPage() {
         )}
       </div>
 
+      {/* ── LOST DEAL ANALYSIS ── */}
+      <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <h2 className="text-base font-semibold text-gray-900 mb-1">Why leads didn&apos;t convert</h2>
+        <p className="text-xs text-gray-400 mb-4">
+          Patterns from archived leads. Use this to spot fixable drop-off.
+        </p>
+        {lostReasons && lostReasons.total > 0 ? (
+          <div className="space-y-4">
+            {/* Total revenue not captured */}
+            <div className="inline-flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2">
+              <span className="text-sm text-amber-800 font-medium">
+                Total revenue not captured:
+              </span>
+              <span className="text-sm font-semibold text-amber-900">
+                {formatCurrency(lostReasons.breakdown.reduce((sum: number, r: any) => sum + (r.revenueLostCents ?? 0), 0))}
+              </span>
+            </div>
+
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart
+                data={lostReasons.breakdown.map((r: any) => ({
+                  ...r,
+                  label: lostReasonLabel(r.reason),
+                  fill: lostReasonColor(r.reason),
+                }))}
+                layout="vertical"
+                margin={{ top: 4, right: 60, bottom: 0, left: 120 }}
+              >
+                <XAxis type="number" tick={{ fontSize: 11 }} allowDecimals={false} />
+                <YAxis type="category" dataKey="label" tick={{ fontSize: 11 }} width={115} />
+                <Tooltip
+                  formatter={(value: any, name: any, props: any) =>
+                    [`${value} (${props.payload.pct}%)`, "Count"]
+                  }
+                />
+                <Bar dataKey="count" radius={[0, 3, 3, 0]}>
+                  {lostReasons.breakdown.map((r: any, index: number) => (
+                    <Cell key={index} fill={lostReasonColor(r.reason)} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        ) : (
+          <p className="text-sm text-gray-400">
+            No archived leads yet — when you archive a client, you&apos;ll be asked why.
+            This chart shows patterns over time.
+          </p>
+        )}
+      </div>
+
       {/* ── REVENUE OVER TIME ── */}
       <div className="bg-white rounded-lg border border-gray-200 p-6">
         <h2 className="text-base font-semibold text-gray-900 mb-4">Revenue over time</h2>
@@ -416,6 +593,66 @@ export default function AnalyticsPage() {
           </ResponsiveContainer>
         ) : (
           <p className="text-sm text-gray-400">No revenue data yet.</p>
+        )}
+      </div>
+
+      {/* ── REVENUE PROJECTION ── */}
+      <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <h2 className="text-base font-semibold text-gray-900 mb-1">Revenue projection</h2>
+        <p className="text-xs text-gray-400 mb-4">
+          Contracted and estimated revenue for the next 12 months. Projected figures use your average package value where actual contracts aren&apos;t signed yet.
+        </p>
+
+        {revenueProjection ? (
+          <div className="space-y-4">
+            {/* Stat cards */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-blue-50 rounded-lg p-4">
+                <p className="text-xs text-blue-600 font-medium uppercase tracking-wide mb-1">Contracted (next 12 mo)</p>
+                <p className="text-2xl font-bold text-blue-900">
+                  {formatCurrency(revenueProjection.totalContractedRevenue)}
+                </p>
+              </div>
+              <div className="bg-gray-50 rounded-lg p-4">
+                <p className="text-xs text-gray-500 font-medium uppercase tracking-wide mb-1">Projected (next 12 mo)</p>
+                <p className="text-2xl font-bold text-gray-800">
+                  {formatCurrency(revenueProjection.totalProjectedRevenue)}
+                </p>
+                <p className="text-xs text-gray-400 mt-0.5">(estimated)</p>
+              </div>
+            </div>
+
+            {/* Composed chart */}
+            <ResponsiveContainer width="100%" height={220}>
+              <ComposedChart
+                data={revenueProjection.months.map((m: any) => ({
+                  ...m,
+                  label: periodToMonthAbbr(m.period),
+                  actual: m.isProjection ? null : m.actualRevenue / 100,
+                  projected: m.isProjection ? m.projectedRevenue / 100 : null,
+                }))}
+                margin={{ top: 4, right: 8, bottom: 0, left: 0 }}
+              >
+                <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                <YAxis tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} tick={{ fontSize: 11 }} />
+                <Tooltip
+                  formatter={(value: any, name: string) => [
+                    `$${Number(value).toLocaleString()}`,
+                    name === "actual" ? "Actual" : "Projected",
+                  ]}
+                  labelFormatter={(label) => label}
+                />
+                <Legend iconSize={10} wrapperStyle={{ fontSize: 12 }} />
+                <ReferenceLine x={periodToMonthAbbr(CURRENT_MONTH)} stroke="#9ca3af" strokeDasharray="4 2" label={{ value: "Today", fontSize: 10, fill: "#9ca3af" }} />
+                <Bar dataKey="actual" name="Actual" fill="#2563eb" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="projected" name="Projected" fill="#bfdbfe" radius={[3, 3, 0, 0]} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        ) : (
+          <p className="text-sm text-gray-400">
+            No revenue data yet — import clients or connect HoneyBook to populate this chart.
+          </p>
         )}
       </div>
 
@@ -440,6 +677,172 @@ export default function AnalyticsPage() {
           <p className="text-xs text-gray-400 mt-3">n={timelines.tourToBookingDays.sampleSize} bookings</p>
         </div>
       )}
+
+      {/* ── PLANNING INTELLIGENCE ── */}
+      <div className="space-y-6">
+        <h2 className="text-lg font-semibold text-gray-900">Planning intelligence</h2>
+
+        {/* Booking Horizon */}
+        <div className="bg-white rounded-lg border border-gray-200 p-6">
+          <h3 className="text-base font-semibold text-gray-900 mb-1">How far in advance couples book</h3>
+          <p className="text-xs text-gray-400 mb-4">
+            Days between inquiry and event date, bucketed by range.
+          </p>
+
+          {bookingHorizon && bookingHorizon.buckets.length > 0 ? (
+            <div className="space-y-4">
+              {/* Stat callouts */}
+              <div className="grid grid-cols-3 gap-4">
+                {[
+                  { label: "25th percentile", value: formatDaysAsMonths(bookingHorizon.p25) },
+                  { label: "Median",           value: formatDaysAsMonths(bookingHorizon.median) },
+                  { label: "75th percentile",  value: formatDaysAsMonths(bookingHorizon.p75) },
+                ].map(({ label, value }) => (
+                  <div key={label} className="bg-blue-50 rounded-lg p-3 text-center">
+                    <p className="text-xl font-bold text-blue-900">{value}</p>
+                    <p className="text-xs text-blue-600 mt-0.5">{label}</p>
+                  </div>
+                ))}
+              </div>
+
+              {/* Horizontal bar chart */}
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart
+                  data={bookingHorizon.buckets}
+                  layout="vertical"
+                  margin={{ top: 4, right: 60, bottom: 0, left: 120 }}
+                >
+                  <XAxis type="number" tick={{ fontSize: 11 }} unit="%" domain={[0, 100]} />
+                  <YAxis type="category" dataKey="label" tick={{ fontSize: 11 }} width={115} />
+                  <Tooltip formatter={(v: any) => [`${v}%`, "Share"]} />
+                  <Bar dataKey="pct" radius={[0, 3, 3, 0]}>
+                    {bookingHorizon.buckets.map((_: any, index: number) => {
+                      const blues = ["#dbeafe", "#bfdbfe", "#93c5fd", "#60a5fa", "#3b82f6", "#2563eb"];
+                      return <Cell key={index} fill={blues[Math.min(index, blues.length - 1)]} />;
+                    })}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <p className="text-sm text-gray-400">Not enough data yet to show booking horizon patterns.</p>
+          )}
+        </div>
+
+        {/* Venue Capacity Outlook */}
+        <div className="bg-white rounded-lg border border-gray-200 p-6">
+          <h3 className="text-base font-semibold text-gray-900 mb-1">Contracted events &amp; tours — next 18 months</h3>
+          <p className="text-xs text-gray-400 mb-4">
+            A forward look at your contracted events and scheduled tours to identify open windows.
+          </p>
+
+          {trimmedCapacity.length > 0 ? (
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart
+                data={trimmedCapacity}
+                margin={{ top: 4, right: 8, bottom: 0, left: 0 }}
+              >
+                <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+                <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                <Tooltip
+                  formatter={(value: any, name: string) => [
+                    value,
+                    name === "contractedEvents" ? "Contracted" : "Tours scheduled",
+                  ]}
+                />
+                <Legend
+                  iconSize={10}
+                  wrapperStyle={{ fontSize: 12 }}
+                  formatter={(value) => value === "contractedEvents" ? "Contracted" : "Tours scheduled"}
+                />
+                <Bar dataKey="contractedEvents" name="contractedEvents" fill="#2563eb" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="scheduledTours"   name="scheduledTours"   fill="#bfdbfe" radius={[3, 3, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <p className="text-sm text-gray-400">No upcoming events yet — import clients to populate this view.</p>
+          )}
+        </div>
+      </div>
+
+      {/* ── INQUIRY RESPONSE TIMES ── */}
+      <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <h2 className="text-base font-semibold text-gray-900 mb-1">Inquiry response speed</h2>
+        <p className="text-xs text-gray-400 mb-4">
+          Industry research: responding within 5 minutes increases conversion 3×.
+        </p>
+
+        {responseTimes && responseTimes.total > 0 ? (
+          <div className="space-y-4">
+            {/* 4 stat blocks */}
+            <div className="grid grid-cols-4 gap-4">
+              <div className="bg-gray-50 rounded-lg p-3 text-center">
+                <p className="text-lg font-bold text-gray-900">{formatMinutes(responseTimes.avg)}</p>
+                <p className="text-xs text-gray-500 mt-0.5">Avg response</p>
+              </div>
+              <div className="bg-gray-50 rounded-lg p-3 text-center">
+                <p className="text-lg font-bold text-gray-900">{formatMinutes(responseTimes.median)}</p>
+                <p className="text-xs text-gray-500 mt-0.5">Median response</p>
+              </div>
+              <div className="bg-green-50 rounded-lg p-3 text-center">
+                <p className="text-lg font-bold text-green-800">
+                  {responseTimes.under5min} ({Math.round((responseTimes.under5min / responseTimes.total) * 100)}%)
+                </p>
+                <p className="text-xs text-green-600 mt-0.5">Under 5 min</p>
+              </div>
+              <div className={`rounded-lg p-3 text-center ${
+                (responseTimes.over24hr / responseTimes.total) > 0.2
+                  ? "bg-amber-50"
+                  : "bg-gray-50"
+              }`}>
+                <p className={`text-lg font-bold ${
+                  (responseTimes.over24hr / responseTimes.total) > 0.2
+                    ? "text-amber-800"
+                    : "text-gray-900"
+                }`}>
+                  {responseTimes.over24hr} ({Math.round((responseTimes.over24hr / responseTimes.total) * 100)}%)
+                </p>
+                <p className={`text-xs mt-0.5 ${
+                  (responseTimes.over24hr / responseTimes.total) > 0.2
+                    ? "text-amber-600"
+                    : "text-gray-500"
+                }`}>Over 24 hrs</p>
+              </div>
+            </div>
+
+            {/* Day-of-week chart */}
+            {responseTimes.byDayOfWeek && responseTimes.byDayOfWeek.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Avg response time by day</p>
+                <ResponsiveContainer width="100%" height={180}>
+                  <BarChart
+                    data={responseTimes.byDayOfWeek}
+                    margin={{ top: 4, right: 8, bottom: 0, left: 0 }}
+                  >
+                    <XAxis dataKey="day" tick={{ fontSize: 11 }} />
+                    <YAxis tickFormatter={(v) => `${Math.round(v / 60)}h`} tick={{ fontSize: 11 }} />
+                    <Tooltip formatter={(v: any) => [formatMinutes(v), "Avg response"]} />
+                    <Bar dataKey="avgMinutes" radius={[3, 3, 0, 0]}>
+                      {responseTimes.byDayOfWeek.map((row: any, index: number) => {
+                        const fill = row.avgMinutes > 480
+                          ? "#ef4444"
+                          : row.avgMinutes > 120
+                          ? "#fbbf24"
+                          : "#3b82f6";
+                        return <Cell key={index} fill={fill} />;
+                      })}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </div>
+        ) : (
+          <p className="text-sm text-gray-400">
+            Mark inquiries as responded to track this metric. Response times appear here once you have at least one logged response.
+          </p>
+        )}
+      </div>
     </div>
   );
 }

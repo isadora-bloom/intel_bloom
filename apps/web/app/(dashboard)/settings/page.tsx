@@ -5,6 +5,62 @@ import { useState, useEffect } from "react";
 import { Mail, Check, AlertCircle, Loader2, Link2, X } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 
+// ── Source provenance badge ────────────────────────────────────────────────
+const SOURCE_BADGE: Record<string, { label: string; className: string }> = {
+  user_estimate: { label: "Estimated",    className: "bg-gray-100 text-gray-600" },
+  user_input:    { label: "You told us",  className: "bg-blue-100 text-blue-700" },
+  api_sync:      { label: "Auto-synced",  className: "bg-green-100 text-green-700" },
+  csv_import:    { label: "Imported",     className: "bg-purple-100 text-purple-700" },
+  email_scan:    { label: "From emails",  className: "bg-teal-100 text-teal-700" },
+  calculated:    { label: "Calculated",   className: "bg-green-100 text-green-700" },
+};
+
+function SourceBadge({ source }: { source: string | null | undefined }) {
+  if (!source) return null;
+  const badge = SOURCE_BADGE[source];
+  if (!badge) return null;
+  return (
+    <span className={`text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0 ${badge.className}`}>
+      {badge.label}
+    </span>
+  );
+}
+
+function ProfileRow({
+  label,
+  value,
+  source,
+}: {
+  label: string;
+  value: string | null | undefined;
+  source: string | null | undefined;
+}) {
+  return (
+    <div className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+      <span className="text-sm text-gray-500 flex-shrink-0 w-52">{label}</span>
+      <span className={`text-sm font-medium flex-1 px-2 ${value ? "text-gray-900" : "text-gray-300"}`}>
+        {value ?? "Not set"}
+      </span>
+      <SourceBadge source={source} />
+    </div>
+  );
+}
+
+function TagPills({ values }: { values: string[] | null | undefined }) {
+  if (!values || values.length === 0) {
+    return <span className="text-sm text-gray-300">Not set</span>;
+  }
+  return (
+    <div className="flex flex-wrap gap-1">
+      {values.map((v) => (
+        <span key={v} className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full border border-blue-200">
+          {v}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   const { data: venue, refetch } = trpc.venues.getCurrent.useQuery();
   const { data: emailConn, refetch: refetchEmail } = trpc.email.getConnection.useQuery();
@@ -70,6 +126,22 @@ export default function SettingsPage() {
   const connectGmailUrl = `/api/auth/google?venue_id=${venue.id}`;
   const emailError = searchParams.get("email_error") === "1";
 
+  // Intelligence profile helpers
+  const venueProfile = (venue as any).venue_profile ?? {};
+  const funnelConfig = (venue as any).funnel_config ?? {};
+
+  function profileValue(key: string): string | null {
+    const field = venueProfile[key];
+    if (!field) return null;
+    return field.value ?? null;
+  }
+
+  function profileSource(key: string): string | null {
+    const field = venueProfile[key];
+    if (!field) return null;
+    return field.source ?? null;
+  }
+
   return (
     <div className="max-w-2xl space-y-6">
       <h1 className="text-2xl font-semibold text-gray-900">Settings</h1>
@@ -98,6 +170,78 @@ export default function SettingsPage() {
             <span className="text-gray-500">Google Trends metro</span>
             <span className="text-gray-700">{(venue as any).google_trends_metro ?? "Not calibrated"}</span>
           </div>
+        </div>
+      </div>
+
+      {/* ── INTELLIGENCE PROFILE ── */}
+      <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <div className="mb-4">
+          <h2 className="text-base font-semibold text-gray-900">Intelligence profile</h2>
+          <p className="text-xs text-gray-400 mt-0.5">
+            What Bloom knows about your venue economics and funnel. Badges show where each value came from.
+          </p>
+        </div>
+
+        {/* Economics fields */}
+        <div className="mb-4">
+          <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Economics</p>
+          <div className="space-y-0">
+            <ProfileRow
+              label="Average package value"
+              value={profileValue("avg_package_value_bucket")}
+              source={profileSource("avg_package_value_bucket")}
+            />
+            <ProfileRow
+              label="Monthly advertising spend"
+              value={profileValue("monthly_ad_spend_bucket")}
+              source={profileSource("monthly_ad_spend_bucket")}
+            />
+            <ProfileRow
+              label="Tours until one booking"
+              value={profileValue("typical_tours_per_booking_bucket")}
+              source={profileSource("typical_tours_per_booking_bucket")}
+            />
+          </div>
+        </div>
+
+        {/* Funnel config fields */}
+        <div className="mb-4">
+          <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Funnel configuration</p>
+          <div className="space-y-3 py-2">
+            <div className="flex items-start justify-between gap-4">
+              <span className="text-sm text-gray-500 flex-shrink-0 w-52 pt-0.5">Where couples find you</span>
+              <div className="flex-1">
+                <TagPills values={funnelConfig.awareness_channels} />
+              </div>
+            </div>
+            <div className="flex items-start justify-between gap-4">
+              <span className="text-sm text-gray-500 flex-shrink-0 w-52 pt-0.5">How they first reach out</span>
+              <div className="flex-1">
+                <TagPills values={funnelConfig.first_touch_methods} />
+              </div>
+            </div>
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-sm text-gray-500 flex-shrink-0 w-52">Tour scheduling</span>
+              <span className={`text-sm font-medium flex-1 ${funnelConfig.tour_method ? "text-gray-900" : "text-gray-300"}`}>
+                {funnelConfig.tour_method ?? "Not set"}
+              </span>
+            </div>
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-sm text-gray-500 flex-shrink-0 w-52">Contract tool</span>
+              <span className={`text-sm font-medium flex-1 ${funnelConfig.contract_method ? "text-gray-900" : "text-gray-300"}`}>
+                {funnelConfig.contract_method ?? "Not set"}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div className="pt-2 border-t border-gray-100">
+          <a
+            href="/dashboard"
+            className="text-sm text-blue-600 hover:text-blue-800 transition-colors"
+          >
+            Update these in your setup checklist on the dashboard →
+          </a>
         </div>
       </div>
 

@@ -1,0 +1,16 @@
+{
+  "crons": [
+    {
+      "path": "/api/macro/fred",
+      "schedule": "0 6 1 * *"
+    },
+    {
+      "path": "/api/briefing/send",
+      "schedule": "0 8 * * 1"
+    },
+    {
+      "path": "/api/cron",
+      "schedule": "0 * * * *"
+    }
+  ]
+}
