@@ -151,6 +151,15 @@ export default function InviteAcceptPage() {
     );
   }
 
+  if (invite.status === "accepted") {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <p className="text-sm text-gray-500">Redirecting...</p>
+      </div>
+    );
+  }
+
+  // invite.status === "ready" from here
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
       <div className="w-full max-w-sm">
