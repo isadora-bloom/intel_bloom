@@ -89,7 +89,7 @@ async function fetchAndUpsertMonth(
     }
   }
 
-  await supabase.from("weather_monthly").upsert(
+  await (supabase.from("weather_monthly") as any).upsert(
     {
       noaa_station_id: stationId,
       year,
