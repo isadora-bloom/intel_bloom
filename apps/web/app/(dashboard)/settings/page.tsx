@@ -2,7 +2,7 @@
 
 import { trpc } from "@/lib/trpc/client";
 import { useState, useEffect } from "react";
-import { Mail, Check, AlertCircle, Loader2, Link2, X } from "lucide-react";
+import { Mail, Check, AlertCircle, Loader2, Link2, X, CloudDownload } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 
 // ── Source provenance badge ────────────────────────────────────────────────
@@ -71,6 +71,10 @@ export default function SettingsPage() {
   const searchParams = useSearchParams();
   const [saved, setSaved] = useState(false);
   const [scanResult, setScanResult] = useState<any>(null);
+  const [weatherIngesting, setWeatherIngesting] = useState(false);
+  const [weatherResult, setWeatherResult] = useState<{ monthsIngested: number; errors: number } | null>(null);
+  const [calibrating, setCalibrating] = useState(false);
+  const [calibrated, setCalibrated] = useState(false);
 
   const [form, setForm] = useState({
     honeybookApiKey: "",
@@ -124,6 +128,35 @@ export default function SettingsPage() {
     });
     setSaved(true);
     setTimeout(() => setSaved(false), 3000);
+  }
+
+  async function handleRecalibrate() {
+    if (!venue) return;
+    setCalibrating(true);
+    setCalibrated(false);
+    try {
+      await fetch("/api/onboard", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ venueId: venue.id }),
+      });
+      setCalibrated(true);
+      setTimeout(() => { setCalibrated(false); refetch(); }, 3000);
+    } finally {
+      setCalibrating(false);
+    }
+  }
+
+  async function handleIngestWeather() {
+    setWeatherIngesting(true);
+    setWeatherResult(null);
+    try {
+      const res = await fetch("/api/admin/ingest-weather", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+      const json = await res.json();
+      if (json.ok) setWeatherResult({ monthsIngested: json.monthsIngested, errors: json.errors });
+    } finally {
+      setWeatherIngesting(false);
+    }
   }
 
   async function handleScan() {
@@ -182,6 +215,20 @@ export default function SettingsPage() {
             <span className="text-gray-700">{(venue as any).google_trends_metro ?? "Not calibrated"}</span>
           </div>
         </div>
+        {(!(venue as any).noaa_station_id || !(venue as any).fed_district || !(venue as any).google_trends_metro) && (
+          <div className="mt-4 flex items-center justify-between gap-3 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
+            <p className="text-sm text-amber-800">
+              Venue not calibrated — weather, macro, and trend signals won't appear on the dashboard.
+            </p>
+            <button
+              onClick={handleRecalibrate}
+              disabled={calibrating}
+              className="flex-shrink-0 flex items-center gap-1.5 bg-amber-600 text-white px-3 py-1.5 rounded text-sm font-medium hover:bg-amber-700 disabled:opacity-50 transition-colors"
+            >
+              {calibrating ? <><Loader2 size={13} className="animate-spin" /> Running…</> : calibrated ? <><Check size={13} /> Done!</> : "Auto-calibrate"}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* ── INTELLIGENCE PROFILE ── */}
@@ -497,14 +544,14 @@ export default function SettingsPage() {
           </label>
           <input
             type="text"
-            placeholder={(venue as any).noaa_station_id ?? "e.g. GHCND:USW00013741"}
+            placeholder={(venue as any).noaa_station_id ?? "e.g. USW00013741"}
             value={form.noaaStationId}
             onChange={(e) => setForm(f => ({ ...f, noaaStationId: e.target.value }))}
             className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
           />
           <p className="text-xs text-gray-400 mt-1">
-            Nearest weather station. For Rapidan VA: try <span className="font-medium">GHCND:USW00013741</span> (Culpeper)
-            or <span className="font-medium">GHCND:USW00013721</span> (Dulles).
+            Nearest weather station GHCND ID (without the GHCND: prefix). For VA/DC area: <span className="font-medium">USW00013741</span> (Richmond)
+            or <span className="font-medium">USW00093738</span> (Dulles).
             Find yours at <span className="font-medium">ncdc.noaa.gov/cdo-web/datatools/findstation</span>
           </p>
         </div>
@@ -533,6 +580,39 @@ export default function SettingsPage() {
             <option value="12">12 — San Francisco</option>
           </select>
           <p className="text-xs text-gray-400 mt-1">Virginia venues use District 5 (Richmond Fed).</p>
+        </div>
+
+        {/* Populate weather data */}
+        <div className="pt-4 border-t border-gray-100">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium text-gray-700">Historical weather data</p>
+              <p className="text-xs text-gray-400 mt-0.5">
+                Pulls 3 years of monthly weather from NOAA for your station. Required for weather charts and season scoring.
+                Requires <span className="font-medium">NOAA_CDO_TOKEN</span> env var.
+              </p>
+              {weatherResult && (
+                <p className="text-xs text-green-600 mt-1">
+                  Done — {weatherResult.monthsIngested} months ingested
+                  {weatherResult.errors > 0 && `, ${weatherResult.errors} failed`}.
+                </p>
+              )}
+            </div>
+            <button
+              onClick={handleIngestWeather}
+              disabled={weatherIngesting || !(venue as any).noaa_station_id}
+              className="flex-shrink-0 flex items-center gap-1.5 border border-gray-300 bg-white text-gray-700 px-3 py-1.5 rounded text-sm hover:bg-gray-50 transition-colors disabled:opacity-40"
+            >
+              {weatherIngesting ? (
+                <><Loader2 size={13} className="animate-spin" /> Fetching…</>
+              ) : (
+                <><CloudDownload size={13} /> Populate</>
+              )}
+            </button>
+          </div>
+          {!(venue as any).noaa_station_id && (
+            <p className="text-xs text-amber-600 mt-2">Set a NOAA station ID above and save first.</p>
+          )}
         </div>
       </div>
 

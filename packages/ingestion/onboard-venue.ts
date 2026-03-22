@@ -15,6 +15,7 @@ const supabase = createClient(
 
 interface Station {
   id: string;
+  ghcnd_id: string;
   name: string;
   metro: string;
   state: string;
@@ -37,7 +38,6 @@ function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): nu
 }
 
 // Station coordinates (approx) for nearest-station calculation
-// These are approximate lat/lng for each station in the list
 const STATION_COORDS: Record<string, { lat: number; lng: number }> = {
   KCJR: { lat: 38.72, lng: -77.86 },
   KIAD: { lat: 38.94, lng: -77.46 },
@@ -56,6 +56,31 @@ const STATION_COORDS: Record<string, { lat: number; lng: number }> = {
   KMIA: { lat: 25.80, lng: -80.29 },
   KRIC: { lat: 37.51, lng: -77.32 },
   KBNA: { lat: 36.12, lng: -86.68 },
+  KBWI: { lat: 39.17, lng: -76.67 },
+  KPHL: { lat: 39.87, lng: -75.24 },
+  KJAX: { lat: 30.49, lng: -81.69 },
+  KTPA: { lat: 27.97, lng: -82.53 },
+  KCLT: { lat: 35.21, lng: -80.95 },
+  KRDU: { lat: 35.88, lng: -78.79 },
+  KSFO: { lat: 37.62, lng: -122.38 },
+  KSLC: { lat: 40.79, lng: -111.98 },
+};
+
+// State → default ICAO station when no lat/lng available
+const STATE_DEFAULT_STATION: Record<string, string> = {
+  VA: "KIAD", MD: "KBWI", DC: "KDCA", WV: "KIAD",
+  NC: "KRDU", SC: "KCLT", GA: "KATL", FL: "KMCO",
+  TN: "KBNA", KY: "KCVG", OH: "KCMH", IN: "KIND",
+  IL: "KORD", WI: "KMKE", MI: "KDTW", MN: "KMSP",
+  PA: "KPHL", NJ: "KJFK", NY: "KJFK", CT: "KBOS",
+  MA: "KBOS", RI: "KBOS", NH: "KBOS", VT: "KBOS", ME: "KBOS",
+  DE: "KPHL", MO: "KSTL", AR: "KMSY", LA: "KMSY",
+  MS: "KJAN", AL: "KBHM", TX: "KDFW", OK: "KOKC",
+  KS: "KOKC", NE: "KOMA", IA: "KMSP", SD: "KMSP",
+  ND: "KMSP", MT: "KSEA", WY: "KDEN", CO: "KDEN",
+  NM: "KABQ", AZ: "KPHX", UT: "KSLC", NV: "KLAS",
+  CA: "KLAX", OR: "KPDX", WA: "KSEA", ID: "KSEA",
+  AK: "KSEA", HI: "KLAX",
 };
 
 export function findNearestNoaaStation(lat: number, lng: number): Station & { lat: number; lng: number } {
@@ -74,6 +99,12 @@ export function findNearestNoaaStation(lat: number, lng: number): Station & { la
   }
 
   return nearest;
+}
+
+export function findStationByState(state: string): Station {
+  const icaoId = STATE_DEFAULT_STATION[state] ?? "KIAD";
+  const station = stationList.find((s) => s.id === icaoId) ?? stationList[1]; // fallback to KIAD
+  return station as Station;
 }
 
 export function getFedDistrict(state: string): number {
@@ -107,8 +138,6 @@ export function getFedDistrict(state: string): number {
 }
 
 export function getGoogleTrendsMetro(lat: number, lng: number): string {
-  // Map approximate coordinates to Google Trends metro codes
-  // These are simplified — production would use a more precise lookup
   if (lat > 37 && lat < 40 && lng > -79 && lng < -76) return "US-DC";
   if (lat > 40.5 && lat < 41.5 && lng > -74.5 && lng < -73) return "US-NY";
   if (lat > 33 && lat < 34.5 && lng > -85 && lng < -83) return "US-GA-524";
@@ -118,8 +147,19 @@ export function getGoogleTrendsMetro(lat: number, lng: number): string {
   if (lat > 32.5 && lat < 33.5 && lng > -97.5 && lng < -96) return "US-TX-623";
   if (lat > 36 && lat < 37 && lng > -87.5 && lng < -86) return "US-TN-659";
   if (lat > 35 && lat < 36 && lng > -79 && lng < -78) return "US-NC-560";
-  return "US"; // National fallback
+  return "US";
 }
+
+// State → rough Google Trends metro fallback
+const STATE_TRENDS_METRO: Record<string, string> = {
+  VA: "US-DC", MD: "US-DC", DC: "US-DC", WV: "US-DC",
+  NY: "US-NY", NJ: "US-NY", CT: "US-NY",
+  GA: "US-GA-524", FL: "US-FL",
+  CA: "US-CA-803", TX: "US-TX-623",
+  IL: "US-IL-602", TN: "US-TN-659",
+  NC: "US-NC-560", SC: "US-NC-560",
+  PA: "US-PA", OH: "US-OH", MA: "US-MA",
+};
 
 async function scanCompetitorLandscape(venueId: string) {
   const { data: venue } = await supabase
@@ -147,7 +187,7 @@ async function scanCompetitorLandscape(venueId: string) {
   const { results } = await response.json();
 
   for (const place of results ?? []) {
-    if (place.place_id === venue.google_place_id) continue; // Skip self
+    if (place.place_id === venue.google_place_id) continue;
 
     const distanceMiles = haversineKm(
       Number(venue.lat),
@@ -180,33 +220,41 @@ export async function onboardVenue(venueId: string) {
     .eq("id", venueId)
     .single();
 
-  if (!venue?.lat || !venue?.lng) {
-    console.error("Venue has no coordinates");
-    return;
+  const lat = venue?.lat ? Number(venue.lat) : null;
+  const lng = venue?.lng ? Number(venue.lng) : null;
+  const state = venue?.state ?? "";
+
+  // 1. Find nearest NOAA station — use lat/lng if available, else state fallback
+  let station: Station;
+  if (lat !== null && lng !== null) {
+    station = findNearestNoaaStation(lat, lng);
+    console.log(`  NOAA station (by coords): ${station.id} → ${station.ghcnd_id} (${station.name})`);
+  } else {
+    station = findStationByState(state);
+    console.log(`  NOAA station (state fallback for ${state}): ${station.id} → ${station.ghcnd_id} (${station.name})`);
   }
-
-  const lat = Number(venue.lat);
-  const lng = Number(venue.lng);
-
-  // 1. Find nearest NOAA station
-  const station = findNearestNoaaStation(lat, lng);
-  console.log(`  NOAA station: ${station.id} (${station.name})`);
+  // Store the GHCND ID — this is what the ingestion and queries use
   await supabase
     .from("venues")
-    .update({ noaa_station_id: station.id, noaa_station_name: station.name })
+    .update({ noaa_station_id: station.ghcnd_id, noaa_station_name: station.name })
     .eq("id", venueId);
 
-  // 2. Assign Fed district
-  const district = getFedDistrict(venue.state);
+  // 2. Assign Fed district (only needs state — always works)
+  const district = getFedDistrict(state);
   console.log(`  Fed district: ${district}`);
   await supabase.from("venues").update({ fed_district: district }).eq("id", venueId);
 
   // 3. Assign Google Trends metro
-  const metro = getGoogleTrendsMetro(lat, lng);
+  let metro: string;
+  if (lat !== null && lng !== null) {
+    metro = getGoogleTrendsMetro(lat, lng);
+  } else {
+    metro = STATE_TRENDS_METRO[state] ?? "US";
+  }
   console.log(`  Google Trends metro: ${metro}`);
   await supabase.from("venues").update({ google_trends_metro: metro }).eq("id", venueId);
 
-  // 4. Competitor scan
+  // 4. Competitor scan (needs lat/lng + Google Places key — skips gracefully if missing)
   await scanCompetitorLandscape(venueId);
 
   // 5. Initial Market Pulse

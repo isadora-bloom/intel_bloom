@@ -25,6 +25,17 @@ All migration files are in `supabase/migrations/`.
 - [ ] `GOOGLE_CLIENT_SECRET` — for Gmail OAuth
 - [ ] `NEXT_PUBLIC_APP_URL` — your production URL (no trailing slash, e.g. `https://app.bloomhq.co`)
 
+### New — Weather data (NOAA)
+- [ ] `NOAA_CDO_TOKEN` — free, register at https://www.ncdc.noaa.gov/cdo-web/token
+  - Required for the "Populate weather data" button in Settings → Intelligence Calibration
+  - Also required for the monthly cron update
+  - Without this, all weather charts and seasonal scoring will be empty
+
+### New — Venue auto-calibration (optional but recommended)
+- [ ] `GOOGLE_PLACES_API_KEY` — from Google Cloud Console → APIs → Places API
+  - Without this, venue onboarding still runs but uses state-level defaults instead of precise coordinates
+  - Affects: NOAA station assignment accuracy, Google Trends metro assignment, competitor scanning
+
 ### New — Stripe billing
 - [ ] `STRIPE_SECRET_KEY` — from Stripe Dashboard → Developers → API Keys
 - [ ] `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` — from same place
@@ -99,9 +110,15 @@ All migration files are in `supabase/migrations/`.
 ---
 
 ## One-time Calibration (per venue after signup)
-1. [ ] After a venue signs up, `/api/onboard` is called automatically — this sets NOAA station, Google Trends metro, Fed district from their city/state
-2. [ ] If a venue's weather/trends data looks wrong, they can manually update in Settings → Intelligence Calibration
-3. [ ] After `FRED_API_KEY` is added, trigger `/api/macro/fred` once to backfill 3 years of economic data
+1. [ ] After a venue signs up, `/api/onboard` is called automatically
+   - With `GOOGLE_PLACES_API_KEY`: geocodes address → precise NOAA station + Trends metro
+   - Without it: uses state-level defaults (still works, slightly less precise)
+2. [ ] Populate historical weather: Settings → Intelligence Calibration → "Populate" button
+   - Requires `NOAA_CDO_TOKEN` — fetches 3 years of monthly data for the venue's station
+   - Takes ~2-3 minutes (NOAA rate limit: 5 requests/second)
+   - Station IDs are GHCND format: `USW00093738` (Dulles), `USW00013741` (Richmond), etc.
+3. [ ] If a venue's weather/trends data looks wrong, manually update station ID in Settings → Intelligence Calibration
+4. [ ] After `FRED_API_KEY` is added, trigger `/api/macro/fred` once to backfill 3 years of economic data
 
 ---
 

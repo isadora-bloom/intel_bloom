@@ -14,6 +14,8 @@ const SERIES: { id: string; signalType: string; geoScope: string }[] = [
   { id: "PSAVERT",  signalType: "personal_savings_rate",  geoScope: "national" },
   { id: "DSPIC96",  signalType: "disposable_income_real", geoScope: "national" },
   { id: "HOUST",    signalType: "housing_starts",         geoScope: "national" },
+  // Consumer sentiment — used by getConsumerSentiment query
+  { id: "UMCSENT",  signalType: "consumer_sentiment",     geoScope: "national" },
 ];
 
 function verifyCronAuth(request: NextRequest): boolean {

@@ -52,6 +52,7 @@ async function fetchMonthlyData(stationId: string, year: number, month: number) 
   const startDate = `${year}-${String(month).padStart(2, "0")}-01`;
   const endDate = getLastDayOfMonth(year, month);
 
+  // stationId is a GHCND station ID (e.g. USW00093738) — prepend GHCND: for CDO API
   const url =
     `${CDO_BASE}/data?datasetid=GSOM&stationid=GHCND:${stationId}` +
     `&startdate=${startDate}&enddate=${endDate}` +
@@ -164,8 +165,13 @@ async function main() {
     await ingestStationHistory(targetStation);
   } else {
     // Ingest all stations (takes multiple days due to rate limits)
+    // De-duplicate by ghcnd_id since multiple airports can share the same station
+    const seen = new Set<string>();
     for (const station of stations) {
-      await ingestStationHistory(station.id);
+      const ghcndId = (station as any).ghcnd_id ?? station.id;
+      if (seen.has(ghcndId)) continue;
+      seen.add(ghcndId);
+      await ingestStationHistory(ghcndId);
     }
   }
 
