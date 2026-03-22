@@ -44,8 +44,9 @@ function calculateWeatherScore(
   return Math.min(score, 10);
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function fetchAndUpsertMonth(
-  supabase: ReturnType<typeof createClient>,
+  supabase: any,
   stationId: string,
   year: number,
   month: number,
