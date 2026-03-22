@@ -128,6 +128,7 @@ export default function SetupChecklist({ venueId }: { venueId: string }) {
   if (!status || dismissed) return null;
 
   function openModal(id: string) {
+    if (!status) return;
     // Pre-fill from existing data
     const fc = status.funnelConfig;
     const vp = status.venueProfile;
