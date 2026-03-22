@@ -84,12 +84,23 @@ export default function SettingsPage() {
     trendsCustomTerms: ["", "", "", ""] as string[],
   });
 
-  // Pre-fill custom trends terms from saved venue data
+  // Pre-fill all form fields from saved venue data
   useEffect(() => {
     if (!venue) return;
-    const saved: string[] = (venue as any).trends_custom_terms ?? [];
-    const padded = [...saved, "", "", "", ""].slice(0, 4);
-    setForm(f => ({ ...f, trendsCustomTerms: padded }));
+    const v = venue as any;
+    const savedTerms: string[] = v.trends_custom_terms ?? [];
+    const padded = [...savedTerms, "", "", "", ""].slice(0, 4);
+    setForm({
+      honeybookApiKey: "",           // keep password fields blank for security
+      googlePlaceId: v.google_place_id ?? "",
+      knotVenueId: v.knot_venue_id ?? "",
+      competitorRadiusMiles: v.competitor_radius_miles ?? 30,
+      contributesToBenchmark: v.contributes_to_benchmark ?? true,
+      googleTrendsMetro: v.google_trends_metro ?? "",
+      noaaStationId: v.noaa_station_id ?? "",
+      fedDistrict: v.fed_district ? String(v.fed_district) : "",
+      trendsCustomTerms: padded,
+    });
   }, [venue]);
 
   // Flash success/error from OAuth callback
