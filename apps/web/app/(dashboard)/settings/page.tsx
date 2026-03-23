@@ -4,6 +4,7 @@ import { trpc } from "@/lib/trpc/client";
 import { useState, useEffect } from "react";
 import { Mail, Check, AlertCircle, Loader2, Link2, X, CloudDownload } from "lucide-react";
 import { useSearchParams } from "next/navigation";
+import Link from "next/link";
 
 // ── Source provenance badge ────────────────────────────────────────────────
 const SOURCE_BADGE: Record<string, { label: string; className: string }> = {
@@ -77,13 +78,10 @@ export default function SettingsPage() {
   const [calibrated, setCalibrated] = useState(false);
   const [fredIngesting, setFredIngesting] = useState(false);
   const [fredResult, setFredResult] = useState<{ ingested: number } | null>(null);
-  const [hbSyncing, setHbSyncing] = useState(false);
-  const [hbResult, setHbResult] = useState<{ synced: number } | string | null>(null);
   const [pulsing, setPulsing] = useState(false);
   const [pulseResult, setPulseResult] = useState<boolean | null>(null);
 
   const [form, setForm] = useState({
-    honeybookApiKey: "",
     googlePlaceId: "",
     knotVenueId: "",
     competitorRadiusMiles: 30,
@@ -101,7 +99,6 @@ export default function SettingsPage() {
     const savedTerms: string[] = v.trends_custom_terms ?? [];
     const padded = [...savedTerms, "", "", "", ""].slice(0, 4);
     setForm({
-      honeybookApiKey: "",           // keep password fields blank for security
       googlePlaceId: v.google_place_id ?? "",
       knotVenueId: v.knot_venue_id ?? "",
       competitorRadiusMiles: v.competitor_radius_miles ?? 30,
@@ -122,7 +119,6 @@ export default function SettingsPage() {
 
   function handleSave() {
     update.mutate({
-      honeybookApiKey: form.honeybookApiKey || undefined,
       googlePlaceId: form.googlePlaceId || undefined,
       knotVenueId: form.knotVenueId || undefined,
       competitorRadiusMiles: form.competitorRadiusMiles,
@@ -145,19 +141,6 @@ export default function SettingsPage() {
       if (json.ingested !== undefined) setFredResult({ ingested: json.ingested });
     } finally {
       setFredIngesting(false);
-    }
-  }
-
-  async function handleHoneyBookSync() {
-    setHbSyncing(true);
-    setHbResult(null);
-    try {
-      const res = await fetch("/api/sync/honeybook", { method: "POST" });
-      const json = await res.json();
-      if (res.ok) setHbResult({ synced: json.synced });
-      else setHbResult(json.error ?? "Sync failed");
-    } finally {
-      setHbSyncing(false);
     }
   }
 
@@ -486,15 +469,21 @@ export default function SettingsPage() {
       <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-4">
         <h2 className="text-base font-semibold text-gray-900">Integrations</h2>
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">HoneyBook API key</label>
-          <input
-            type="password"
-            placeholder={(venue as any).honeybook_api_key ? "••••••••" : "Not connected"}
-            value={form.honeybookApiKey}
-            onChange={(e) => setForm(f => ({ ...f, honeybookApiKey: e.target.value }))}
-            className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
-          />
+        {/* HoneyBook — CSV import, no API */}
+        <div className="rounded-lg bg-gray-50 border border-gray-200 px-4 py-3 flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm font-medium text-gray-700">HoneyBook</p>
+            <p className="text-xs text-gray-400 mt-0.5">
+              HoneyBook doesn't offer a public API. Export your projects as CSV from
+              HoneyBook → Reports → Projects report → Export, then import here.
+            </p>
+          </div>
+          <Link
+            href="/import"
+            className="flex-shrink-0 text-sm text-blue-600 hover:text-blue-800 font-medium whitespace-nowrap"
+          >
+            Import CSV →
+          </Link>
         </div>
 
         <div>
@@ -520,38 +509,6 @@ export default function SettingsPage() {
           />
         </div>
 
-        {/* HoneyBook sync */}
-        <div className="pt-4 border-t border-gray-100">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <p className="text-sm font-medium text-gray-700">Sync from HoneyBook</p>
-              <p className="text-xs text-gray-400 mt-0.5">
-                Pulls all projects from HoneyBook and creates or updates matching clients.
-                Requires HoneyBook API key above.
-              </p>
-              {typeof hbResult === "object" && hbResult !== null && (
-                <p className="text-xs text-green-600 mt-1">Done — {(hbResult as any).synced} projects synced.</p>
-              )}
-              {typeof hbResult === "string" && (
-                <p className="text-xs text-red-600 mt-1">{hbResult}</p>
-              )}
-            </div>
-            <button
-              onClick={handleHoneyBookSync}
-              disabled={hbSyncing || !(venue as any).honeybook_api_key}
-              className="flex-shrink-0 flex items-center gap-1.5 border border-gray-300 bg-white text-gray-700 px-3 py-1.5 rounded text-sm hover:bg-gray-50 transition-colors disabled:opacity-40"
-            >
-              {hbSyncing ? (
-                <><Loader2 size={13} className="animate-spin" /> Syncing…</>
-              ) : (
-                <><CloudDownload size={13} /> Sync now</>
-              )}
-            </button>
-          </div>
-          {!(venue as any).honeybook_api_key && (
-            <p className="text-xs text-amber-600 mt-2">Add your HoneyBook API key above and save first.</p>
-          )}
-        </div>
       </div>
 
       {/* Intelligence calibration */}

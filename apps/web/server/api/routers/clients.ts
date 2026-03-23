@@ -143,6 +143,73 @@ export const clientsRouter = router({
       return data;
     }),
 
+  // Upsert client from import — deduplicates by email, then name
+  upsertFromImport: venueProcedure
+    .input(
+      z.object({
+        namePrimary: z.string().min(1),
+        namePartner: z.string().optional(),
+        emailPrimary: z.string().optional(),
+        phonePrimary: z.string().optional(),
+        eventDate: z.string().optional(),
+        package: z.string().optional(),
+        guestCountInitial: z.number().int().optional(),
+        revenueCents: z.number().int().optional(),
+        status: z.enum(CLIENT_STATUS).default("inquiry"),
+        selfReportedSource: z.string().optional(),
+        inquiryDate: z.string().optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      // Dedup: try email first, then name
+      let existingId: string | null = null;
+
+      if (input.emailPrimary) {
+        const { data: byEmail } = await ctx.supabase
+          .from("clients")
+          .select("id")
+          .eq("venue_id", ctx.venueId)
+          .eq("email_primary", input.emailPrimary)
+          .limit(1)
+          .single();
+        existingId = byEmail?.id ?? null;
+      }
+
+      if (!existingId) {
+        const { data: byName } = await ctx.supabase
+          .from("clients")
+          .select("id")
+          .eq("venue_id", ctx.venueId)
+          .eq("name_primary", input.namePrimary)
+          .limit(1)
+          .single();
+        existingId = byName?.id ?? null;
+      }
+
+      const payload = {
+        venue_id: ctx.venueId,
+        name_primary: input.namePrimary,
+        name_partner: input.namePartner,
+        email_primary: input.emailPrimary,
+        phone_primary: input.phonePrimary,
+        event_date: input.eventDate,
+        package: input.package,
+        guest_count_initial: input.guestCountInitial,
+        revenue_cents: input.revenueCents,
+        status: input.status,
+        self_reported_source: input.selfReportedSource,
+        inquiry_date: input.inquiryDate ?? null,
+      };
+
+      if (existingId) {
+        await ctx.supabase.from("clients").update(payload).eq("id", existingId);
+        return { action: "updated" as const };
+      } else {
+        await ctx.supabase.from("clients").insert(payload);
+        return { action: "created" as const };
+      }
+    }),
+
   // Update client
   update: venueProcedure
     .input(
