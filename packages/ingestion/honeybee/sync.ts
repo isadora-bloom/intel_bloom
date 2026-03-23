@@ -1,6 +1,7 @@
 /**
  * HoneyBook Sync
- * Syncs projects, contacts, and payments from HoneyBook API
+ * Syncs projects, contacts, and payments from HoneyBook API.
+ * Deduplicates by honeybook_project_id for stable matching.
  */
 
 import { createClient } from "@supabase/supabase-js";
@@ -45,36 +46,83 @@ async function hbRequest(path: string, token: string) {
 }
 
 async function upsertClientFromHoneyBook(venueId: string, project: any) {
-  const contactName =
-    project.contact?.name ??
-    project.name ??
-    "Unknown";
+  const projectId = project.id as string | null;
 
-  const clientData = {
+  // Primary contact
+  const namePrimary: string = project.contact?.name ?? project.name ?? "Unknown";
+  const namePartner: string | null = project.secondary_contact?.name ?? null;
+
+  // Determine self-reported source from HB referral / lead_source fields
+  const selfReportedSource: string | null =
+    project.lead_source ?? project.referral_source ?? project.referral?.name ?? null;
+
+  const clientData: Record<string, unknown> = {
     venue_id: venueId,
-    name_primary: contactName,
+    name_primary: namePrimary,
+    name_partner: namePartner,
     email_primary: project.contact?.email ?? null,
+    email_partner: project.secondary_contact?.email ?? null,
     phone_primary: project.contact?.phone ?? null,
     event_date: project.event_date ?? null,
     package: project.service?.name ?? null,
-    revenue_cents: project.amount_paid ? Math.round(project.amount_paid * 100) : null,
+    // HB stores total contract value; use amount_due if available, else amount_paid
+    revenue_cents: project.amount_due
+      ? Math.round(project.amount_due * 100)
+      : project.amount_paid
+      ? Math.round(project.amount_paid * 100)
+      : null,
+    guest_count_initial: project.guest_count ?? project.guests ?? null,
     status: mapHbStatus(project.status),
+    self_reported_source: selfReportedSource,
+    inquiry_date: project.created_at ?? null,
+    honeybook_project_id: projectId,
   };
 
-  // Check if client already exists with this HB project ID
-  const { data: existing } = await supabase
-    .from("clients")
-    .select("id")
-    .eq("venue_id", venueId)
-    .eq("name_primary", contactName)
-    .limit(1)
-    .single();
+  if (projectId) {
+    // Stable dedup by HB project ID
+    const { data: existing } = await supabase
+      .from("clients")
+      .select("id")
+      .eq("venue_id", venueId)
+      .eq("honeybook_project_id", projectId)
+      .limit(1)
+      .single();
 
-  if (existing) {
-    await supabase.from("clients").update(clientData).eq("id", existing.id);
+    if (existing) {
+      await supabase.from("clients").update(clientData).eq("id", existing.id);
+      return;
+    }
   } else {
-    await supabase.from("clients").insert(clientData);
+    // Fallback: dedup by email, then name
+    const emailPrimary = project.contact?.email;
+    if (emailPrimary) {
+      const { data: existing } = await supabase
+        .from("clients")
+        .select("id")
+        .eq("venue_id", venueId)
+        .eq("email_primary", emailPrimary)
+        .limit(1)
+        .single();
+      if (existing) {
+        await supabase.from("clients").update(clientData).eq("id", existing.id);
+        return;
+      }
+    } else {
+      const { data: existing } = await supabase
+        .from("clients")
+        .select("id")
+        .eq("venue_id", venueId)
+        .eq("name_primary", namePrimary)
+        .limit(1)
+        .single();
+      if (existing) {
+        await supabase.from("clients").update(clientData).eq("id", existing.id);
+        return;
+      }
+    }
   }
+
+  await supabase.from("clients").insert(clientData);
 }
 
 export async function syncHoneyBook(venueId: string, apiKey: string) {
@@ -99,10 +147,10 @@ export async function syncHoneyBook(venueId: string, apiKey: string) {
     if (!meta || page >= meta.total_pages) break;
     page++;
 
-    await sleep(500); // respect rate limits
+    await sleep(500);
   }
 
-  // Backfill weather for all events
+  // Backfill weather scores for events that have an event_date
   await backfillEventWeather(venueId);
 
   console.log(`HoneyBook sync complete: ${synced} projects`);
@@ -118,6 +166,8 @@ async function backfillEventWeather(venueId: string) {
 
   if (!venue?.noaa_station_id) return;
 
+  const stationId = venue.noaa_station_id.replace(/^GHCND:/i, "");
+
   const { data: clients } = await supabase
     .from("clients")
     .select("id, event_date, review_star_rating")
@@ -130,8 +180,8 @@ async function backfillEventWeather(venueId: string) {
     const eventDate = new Date(client.event_date as string);
     const { data: weather } = await supabase
       .from("weather_monthly")
-      .select("weather_score, temp_max_f, precipitation_inches")
-      .eq("noaa_station_id", venue.noaa_station_id.replace(/^GHCND:/i, ""))
+      .select("weather_score")
+      .eq("noaa_station_id", stationId)
       .eq("year", eventDate.getFullYear())
       .eq("month", eventDate.getMonth() + 1)
       .single();
@@ -139,10 +189,7 @@ async function backfillEventWeather(venueId: string) {
     if (weather) {
       const adjustedScore =
         client.review_star_rating && weather.weather_score
-          ? calculateAdjustedScore(
-              Number(client.review_star_rating),
-              weather.weather_score
-            )
+          ? calculateAdjustedScore(Number(client.review_star_rating), weather.weather_score)
           : null;
 
       await supabase
