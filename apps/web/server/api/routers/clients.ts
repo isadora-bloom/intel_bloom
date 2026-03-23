@@ -150,6 +150,7 @@ export const clientsRouter = router({
         namePrimary: z.string().min(1),
         namePartner: z.string().optional(),
         emailPrimary: z.string().optional(),
+        emailPartner: z.string().optional(),
         phonePrimary: z.string().optional(),
         eventDate: z.string().optional(),
         package: z.string().optional(),
@@ -161,7 +162,7 @@ export const clientsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      // Dedup: try email first, then name
+      // Dedup: try email first, then event_date, then name
       let existingId: string | null = null;
 
       if (input.emailPrimary) {
@@ -173,6 +174,17 @@ export const clientsRouter = router({
           .limit(1)
           .single();
         existingId = byEmail?.id ?? null;
+      }
+
+      if (!existingId && input.eventDate) {
+        const { data: byDate } = await ctx.supabase
+          .from("clients")
+          .select("id")
+          .eq("venue_id", ctx.venueId)
+          .eq("event_date", input.eventDate)
+          .limit(1)
+          .single();
+        existingId = byDate?.id ?? null;
       }
 
       if (!existingId) {
@@ -191,6 +203,7 @@ export const clientsRouter = router({
         name_primary: input.namePrimary,
         name_partner: input.namePartner,
         email_primary: input.emailPrimary,
+        email_partner: input.emailPartner,
         phone_primary: input.phonePrimary,
         event_date: input.eventDate,
         package: input.package,

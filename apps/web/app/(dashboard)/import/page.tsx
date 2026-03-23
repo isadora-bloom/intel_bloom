@@ -160,6 +160,7 @@ export default function ImportPage() {
     guest_count: "__none__", package: "__none__", inquiry_date: "__none__",
   });
   const [showSecondary, setShowSecondary] = useState(false);
+  const [mergeCouplePairs, setMergeCouplePairs] = useState(true);
   const [importing, setImporting] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number; updated: number; created: number } | null>(null);
   const [result, setResult] = useState<{ created: number; updated: number; skipped: number } | null>(null);
@@ -207,45 +208,130 @@ export default function ImportPage() {
     setMapping((prev) => ({ ...prev, [field]: value }));
   }
 
+  function buildRecords(): Array<Parameters<typeof upsertMutation.mutateAsync>[0]> {
+    const get = (row: ParsedRow, field: keyof ColumnMapping) =>
+      mapping[field] !== "__none__" ? row[mapping[field]]?.trim() || undefined : undefined;
+
+    if (mergeCouplePairs && mapping.event_date !== "__none__") {
+      // Group rows by event date — pairs on the same date = one couple
+      const byDate = new Map<string, ParsedRow[]>();
+      const noDate: ParsedRow[] = [];
+
+      for (const row of rows) {
+        const dateKey = parseEventDate(row[mapping.event_date] ?? "");
+        if (dateKey) {
+          if (!byDate.has(dateKey)) byDate.set(dateKey, []);
+          byDate.get(dateKey)!.push(row);
+        } else {
+          noDate.push(row);
+        }
+      }
+
+      const records: Array<Parameters<typeof upsertMutation.mutateAsync>[0]> = [];
+
+      for (const [dateKey, group] of byDate) {
+        const primary = group[0];
+        const partner = group.length === 2 ? group[1] : undefined;
+
+        const rawStatus = get(primary, "status") ?? "";
+        records.push({
+          namePrimary:        get(primary, "name") ?? "Unknown",
+          namePartner:        partner ? get(partner, "name") : get(primary, "partner"),
+          emailPrimary:       get(primary, "email"),
+          emailPartner:       partner ? get(partner, "email") : undefined,
+          phonePrimary:       get(primary, "phone"),
+          eventDate:          dateKey,
+          revenueCents:       parseCurrencyToCents(primary[mapping.revenue] ?? ""),
+          selfReportedSource: get(primary, "source"),
+          guestCountInitial:  parseGuestCount(primary[mapping.guest_count] ?? ""),
+          package:            get(primary, "package"),
+          inquiryDate:        parseEventDate(primary[mapping.inquiry_date] ?? ""),
+          status:             rawStatus ? mapHbStatus(rawStatus) : "inquiry",
+        });
+
+        // 3+ rows on same date: import extras individually
+        for (let i = 2; i < group.length; i++) {
+          const row = group[i];
+          const rs = get(row, "status") ?? "";
+          records.push({
+            namePrimary:        get(row, "name") ?? "Unknown",
+            emailPrimary:       get(row, "email"),
+            phonePrimary:       get(row, "phone"),
+            eventDate:          dateKey,
+            revenueCents:       parseCurrencyToCents(row[mapping.revenue] ?? ""),
+            selfReportedSource: get(row, "source"),
+            guestCountInitial:  parseGuestCount(row[mapping.guest_count] ?? ""),
+            package:            get(row, "package"),
+            inquiryDate:        parseEventDate(row[mapping.inquiry_date] ?? ""),
+            status:             rs ? mapHbStatus(rs) : "inquiry",
+          });
+        }
+      }
+
+      // Rows with no event date — import individually
+      for (const row of noDate) {
+        const rs = get(row, "status") ?? "";
+        const name = get(row, "name");
+        if (!name) continue;
+        records.push({
+          namePrimary:        name,
+          namePartner:        get(row, "partner"),
+          emailPrimary:       get(row, "email"),
+          phonePrimary:       get(row, "phone"),
+          revenueCents:       parseCurrencyToCents(row[mapping.revenue] ?? ""),
+          selfReportedSource: get(row, "source"),
+          guestCountInitial:  parseGuestCount(row[mapping.guest_count] ?? ""),
+          package:            get(row, "package"),
+          inquiryDate:        parseEventDate(row[mapping.inquiry_date] ?? ""),
+          status:             rs ? mapHbStatus(rs) : "inquiry",
+        });
+      }
+
+      return records;
+    }
+
+    // No couple merging — one record per row
+    return rows
+      .map((row) => {
+        const name = get(row, "name");
+        if (!name) return null;
+        const rs = get(row, "status") ?? "";
+        return {
+          namePrimary:        name,
+          namePartner:        get(row, "partner"),
+          emailPrimary:       get(row, "email"),
+          phonePrimary:       get(row, "phone"),
+          eventDate:          parseEventDate(row[mapping.event_date] ?? ""),
+          revenueCents:       parseCurrencyToCents(row[mapping.revenue] ?? ""),
+          selfReportedSource: get(row, "source"),
+          guestCountInitial:  parseGuestCount(row[mapping.guest_count] ?? ""),
+          package:            get(row, "package"),
+          inquiryDate:        parseEventDate(row[mapping.inquiry_date] ?? ""),
+          status:             rs ? mapHbStatus(rs) : "inquiry",
+        } as Parameters<typeof upsertMutation.mutateAsync>[0];
+      })
+      .filter((r): r is NonNullable<typeof r> => r !== null);
+  }
+
   async function handleImport() {
     if (!rows.length) return;
     setImporting(true);
-    setProgress({ done: 0, total: rows.length, created: 0, updated: 0 });
+
+    const records = buildRecords();
+    setProgress({ done: 0, total: records.length, created: 0, updated: 0 });
 
     let created = 0;
     let updated = 0;
     let skipped = 0;
 
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
-      const namePrimary = mapping.name !== "__none__" ? row[mapping.name]?.trim() : undefined;
-      if (!namePrimary) { skipped++; setProgress({ done: i + 1, total: rows.length, created, updated }); continue; }
-
-      const rawStatus = mapping.status !== "__none__" ? row[mapping.status]?.trim() : "";
-      const statusMapped = rawStatus ? mapHbStatus(rawStatus) : "inquiry";
-
-      const payload = {
-        namePrimary,
-        namePartner:      mapping.partner      !== "__none__" ? row[mapping.partner]?.trim()      || undefined : undefined,
-        emailPrimary:     mapping.email        !== "__none__" ? row[mapping.email]?.trim()        || undefined : undefined,
-        phonePrimary:     mapping.phone        !== "__none__" ? row[mapping.phone]?.trim()        || undefined : undefined,
-        eventDate:        mapping.event_date   !== "__none__" ? parseEventDate(row[mapping.event_date])        : undefined,
-        revenueCents:     mapping.revenue      !== "__none__" ? parseCurrencyToCents(row[mapping.revenue])     : undefined,
-        selfReportedSource: mapping.source     !== "__none__" ? row[mapping.source]?.trim()       || undefined : undefined,
-        guestCountInitial:  mapping.guest_count !== "__none__" ? parseGuestCount(row[mapping.guest_count])     : undefined,
-        package:          mapping.package      !== "__none__" ? row[mapping.package]?.trim()      || undefined : undefined,
-        inquiryDate:      mapping.inquiry_date !== "__none__" ? parseEventDate(row[mapping.inquiry_date])      : undefined,
-        status:           statusMapped,
-      };
-
+    for (let i = 0; i < records.length; i++) {
       try {
-        const res = await upsertMutation.mutateAsync(payload);
+        const res = await upsertMutation.mutateAsync(records[i]);
         if (res.action === "created") created++; else updated++;
       } catch {
         skipped++;
       }
-
-      setProgress({ done: i + 1, total: rows.length, created, updated });
+      setProgress({ done: i + 1, total: records.length, created, updated });
     }
 
     setResult({ created, updated, skipped });
@@ -396,8 +482,41 @@ export default function ImportPage() {
 
       {/* Section 3 — Import */}
       {rows.length > 0 && !result && (
-        <div className="bg-white border border-gray-200 rounded-xl p-6">
-          <h2 className="text-sm font-semibold text-gray-900 mb-4">3. Import</h2>
+        <div className="bg-white border border-gray-200 rounded-xl p-6 space-y-4">
+          <h2 className="text-sm font-semibold text-gray-900">3. Import</h2>
+
+          {/* Couple pairing toggle */}
+          {mapping.event_date !== "__none__" && (() => {
+            // Count how many dates have exactly 2 rows
+            const dateCounts = new Map<string, number>();
+            for (const row of rows) {
+              const d = parseEventDate(row[mapping.event_date] ?? "");
+              if (d) dateCounts.set(d, (dateCounts.get(d) ?? 0) + 1);
+            }
+            const pairCount = [...dateCounts.values()].filter(n => n === 2).length;
+            if (pairCount === 0) return null;
+            const recordCount = buildRecords().length;
+            return (
+              <div className="flex items-start gap-3 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3">
+                <input
+                  type="checkbox"
+                  id="mergeCouple"
+                  checked={mergeCouplePairs}
+                  onChange={(e) => setMergeCouplePairs(e.target.checked)}
+                  className="mt-0.5"
+                />
+                <label htmlFor="mergeCouple" className="text-sm text-amber-800 cursor-pointer">
+                  <span className="font-medium">Merge couple pairs</span> — {pairCount} date{pairCount !== 1 ? "s" : ""} have exactly 2 rows.
+                  Merging combines them into one client record (primary + partner) so revenue isn't doubled.
+                  {mergeCouplePairs && (
+                    <span className="block text-xs text-amber-600 mt-0.5">
+                      {rows.length} rows → {recordCount} client records after merging.
+                    </span>
+                  )}
+                </label>
+              </div>
+            );
+          })()}
 
           {progress ? (
             <div className="space-y-3">
@@ -418,10 +537,10 @@ export default function ImportPage() {
                 disabled={importing}
                 className="px-5 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
               >
-                Import {rows.length} record{rows.length !== 1 ? "s" : ""}
+                Import {buildRecords().length} client record{buildRecords().length !== 1 ? "s" : ""}
               </button>
               <p className="text-xs text-gray-400">
-                Existing clients matched by email (or name if no email) will be updated, not duplicated.
+                Matched by email or event date first — existing records are updated, not duplicated.
               </p>
             </div>
           )}
