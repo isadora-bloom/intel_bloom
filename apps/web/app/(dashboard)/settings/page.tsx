@@ -77,6 +77,10 @@ export default function SettingsPage() {
   const [calibrated, setCalibrated] = useState(false);
   const [fredIngesting, setFredIngesting] = useState(false);
   const [fredResult, setFredResult] = useState<{ ingested: number } | null>(null);
+  const [hbSyncing, setHbSyncing] = useState(false);
+  const [hbResult, setHbResult] = useState<{ synced: number } | string | null>(null);
+  const [pulsing, setPulsing] = useState(false);
+  const [pulseResult, setPulseResult] = useState<boolean | null>(null);
 
   const [form, setForm] = useState({
     honeybookApiKey: "",
@@ -141,6 +145,30 @@ export default function SettingsPage() {
       if (json.ingested !== undefined) setFredResult({ ingested: json.ingested });
     } finally {
       setFredIngesting(false);
+    }
+  }
+
+  async function handleHoneyBookSync() {
+    setHbSyncing(true);
+    setHbResult(null);
+    try {
+      const res = await fetch("/api/sync/honeybook", { method: "POST" });
+      const json = await res.json();
+      if (res.ok) setHbResult({ synced: json.synced });
+      else setHbResult(json.error ?? "Sync failed");
+    } finally {
+      setHbSyncing(false);
+    }
+  }
+
+  async function handleRefreshPulse() {
+    setPulsing(true);
+    setPulseResult(null);
+    try {
+      const res = await fetch("/api/admin/refresh-pulse", { method: "POST" });
+      setPulseResult(res.ok);
+    } finally {
+      setPulsing(false);
     }
   }
 
@@ -491,6 +519,39 @@ export default function SettingsPage() {
             className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
           />
         </div>
+
+        {/* HoneyBook sync */}
+        <div className="pt-4 border-t border-gray-100">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium text-gray-700">Sync from HoneyBook</p>
+              <p className="text-xs text-gray-400 mt-0.5">
+                Pulls all projects from HoneyBook and creates or updates matching clients.
+                Requires HoneyBook API key above.
+              </p>
+              {typeof hbResult === "object" && hbResult !== null && (
+                <p className="text-xs text-green-600 mt-1">Done — {(hbResult as any).synced} projects synced.</p>
+              )}
+              {typeof hbResult === "string" && (
+                <p className="text-xs text-red-600 mt-1">{hbResult}</p>
+              )}
+            </div>
+            <button
+              onClick={handleHoneyBookSync}
+              disabled={hbSyncing || !(venue as any).honeybook_api_key}
+              className="flex-shrink-0 flex items-center gap-1.5 border border-gray-300 bg-white text-gray-700 px-3 py-1.5 rounded text-sm hover:bg-gray-50 transition-colors disabled:opacity-40"
+            >
+              {hbSyncing ? (
+                <><Loader2 size={13} className="animate-spin" /> Syncing…</>
+              ) : (
+                <><CloudDownload size={13} /> Sync now</>
+              )}
+            </button>
+          </div>
+          {!(venue as any).honeybook_api_key && (
+            <p className="text-xs text-amber-600 mt-2">Add your HoneyBook API key above and save first.</p>
+          )}
+        </div>
       </div>
 
       {/* Intelligence calibration */}
@@ -651,6 +712,36 @@ export default function SettingsPage() {
                 <><Loader2 size={13} className="animate-spin" /> Fetching…</>
               ) : (
                 <><CloudDownload size={13} /> Populate</>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* Refresh market pulse */}
+        <div className="pt-4 border-t border-gray-100">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium text-gray-700">Market Pulse score</p>
+              <p className="text-xs text-gray-400 mt-0.5">
+                Recalculates the composite demand score from weather, FRED, and search trend data.
+                Runs automatically each Monday; click to refresh now.
+              </p>
+              {pulseResult === true && (
+                <p className="text-xs text-green-600 mt-1">Market Pulse refreshed.</p>
+              )}
+              {pulseResult === false && (
+                <p className="text-xs text-red-600 mt-1">Refresh failed — check that weather + FRED data is populated first.</p>
+              )}
+            </div>
+            <button
+              onClick={handleRefreshPulse}
+              disabled={pulsing}
+              className="flex-shrink-0 flex items-center gap-1.5 border border-gray-300 bg-white text-gray-700 px-3 py-1.5 rounded text-sm hover:bg-gray-50 transition-colors disabled:opacity-40"
+            >
+              {pulsing ? (
+                <><Loader2 size={13} className="animate-spin" /> Calculating…</>
+              ) : (
+                <><Check size={13} /> Refresh</>
               )}
             </button>
           </div>

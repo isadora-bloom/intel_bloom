@@ -127,27 +127,28 @@ async function backfillEventWeather(venueId: string) {
   let backfilled = 0;
 
   for (const client of clients ?? []) {
+    const eventDate = new Date(client.event_date as string);
     const { data: weather } = await supabase
-      .from("weather_daily")
-      .select("*")
-      .eq("noaa_station_id", venue.noaa_station_id)
-      .eq("date", client.event_date)
+      .from("weather_monthly")
+      .select("weather_score, temp_max_f, precipitation_inches")
+      .eq("noaa_station_id", venue.noaa_station_id.replace(/^GHCND:/i, ""))
+      .eq("year", eventDate.getFullYear())
+      .eq("month", eventDate.getMonth() + 1)
       .single();
 
     if (weather) {
       const adjustedScore =
-        client.review_star_rating && weather.difficulty_score
+        client.review_star_rating && weather.weather_score
           ? calculateAdjustedScore(
               Number(client.review_star_rating),
-              weather.difficulty_score
+              weather.weather_score
             )
           : null;
 
       await supabase
         .from("clients")
         .update({
-          weather_event_date: weather,
-          weather_difficulty_score: weather.difficulty_score,
+          weather_difficulty_score: weather.weather_score,
           review_adjusted_score: adjustedScore,
         })
         .eq("id", client.id);

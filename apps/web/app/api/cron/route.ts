@@ -6,12 +6,25 @@ function verifyCronSecret(request: NextRequest): boolean {
   return authHeader === `Bearer ${process.env.CRON_SECRET}`;
 }
 
+export async function GET(request: NextRequest) {
+  return handleCron(request);
+}
+
 export async function POST(request: NextRequest) {
+  return handleCron(request);
+}
+
+async function handleCron(request: NextRequest) {
   if (!verifyCronSecret(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { job } = await request.json();
+  // Job name comes from query param: /api/cron?job=market_pulse_refresh
+  const job = request.nextUrl.searchParams.get("job");
+
+  if (!job) {
+    return NextResponse.json({ error: "job query param required" }, { status: 400 });
+  }
 
   try {
     switch (job) {
@@ -36,14 +49,12 @@ export async function POST(request: NextRequest) {
       }
 
       case "sensitive_data_cleanup": {
-        // Call Supabase Edge Function
         const { createServiceClient } = await import("@/lib/supabase/server");
         const supabase = createServiceClient();
         await supabase.rpc("clear_aged_sensitive_flags");
         break;
       }
 
-      // ── WEEKLY ──
       case "trends_refresh": {
         const { ingestTrendsAllVenues } = await import("@bloom/ingestion/trends/ingest-trends");
         const log: string[] = [];

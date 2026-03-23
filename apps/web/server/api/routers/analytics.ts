@@ -693,7 +693,7 @@ export const analyticsRouter = router({
         .from("clients")
         .select("event_date, status")
         .eq("venue_id", ctx.venueId)
-        .in("status", ["booked", "planning", "event_complete"])
+        .in("status", ["contracted", "booked", "planning", "event_complete"])
         .not("event_date", "is", null)
         .gte("event_date", monthStartIso),
       ctx.supabase
@@ -797,7 +797,7 @@ export const analyticsRouter = router({
         .from("clients")
         .select("event_date, revenue_cents, status")
         .eq("venue_id", ctx.venueId)
-        .in("status", ["booked", "planning", "event_complete"])
+        .in("status", ["contracted", "booked", "planning", "event_complete"])
         .not("event_date", "is", null)
         .gte("event_date", past12Start.toISOString().split("T")[0])
         .lte("event_date", future12End.toISOString().split("T")[0]),
