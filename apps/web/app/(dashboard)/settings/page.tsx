@@ -75,6 +75,8 @@ export default function SettingsPage() {
   const [weatherResult, setWeatherResult] = useState<{ monthsIngested: number; errors: number } | null>(null);
   const [calibrating, setCalibrating] = useState(false);
   const [calibrated, setCalibrated] = useState(false);
+  const [fredIngesting, setFredIngesting] = useState(false);
+  const [fredResult, setFredResult] = useState<{ ingested: number } | null>(null);
 
   const [form, setForm] = useState({
     honeybookApiKey: "",
@@ -128,6 +130,18 @@ export default function SettingsPage() {
     });
     setSaved(true);
     setTimeout(() => setSaved(false), 3000);
+  }
+
+  async function handleFredBackfill() {
+    setFredIngesting(true);
+    setFredResult(null);
+    try {
+      const res = await fetch("/api/macro/fred", { method: "POST" });
+      const json = await res.json();
+      if (json.ingested !== undefined) setFredResult({ ingested: json.ingested });
+    } finally {
+      setFredIngesting(false);
+    }
   }
 
   async function handleRecalibrate() {
@@ -613,6 +627,33 @@ export default function SettingsPage() {
           {!(venue as any).noaa_station_id && (
             <p className="text-xs text-amber-600 mt-2">Set a NOAA station ID above and save first.</p>
           )}
+        </div>
+
+        {/* Populate FRED macro data */}
+        <div className="pt-4 border-t border-gray-100">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium text-gray-700">Economic signal data (FRED)</p>
+              <p className="text-xs text-gray-400 mt-0.5">
+                Pulls 3 years of unemployment, savings rate, disposable income, and housing starts.
+                Required for the Market Pulse economic section. Requires <span className="font-medium">FRED_API_KEY</span> env var.
+              </p>
+              {fredResult && (
+                <p className="text-xs text-green-600 mt-1">Done — {fredResult.ingested} data points ingested.</p>
+              )}
+            </div>
+            <button
+              onClick={handleFredBackfill}
+              disabled={fredIngesting}
+              className="flex-shrink-0 flex items-center gap-1.5 border border-gray-300 bg-white text-gray-700 px-3 py-1.5 rounded text-sm hover:bg-gray-50 transition-colors disabled:opacity-40"
+            >
+              {fredIngesting ? (
+                <><Loader2 size={13} className="animate-spin" /> Fetching…</>
+              ) : (
+                <><CloudDownload size={13} /> Populate</>
+              )}
+            </button>
+          </div>
         </div>
       </div>
 
