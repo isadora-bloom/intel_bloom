@@ -130,6 +130,7 @@ export async function POST(req: NextRequest) {
     if (!stationId) {
       return NextResponse.json({ error: "stationId required" }, { status: 400 });
     }
+    stationId = stationId.replace(/^GHCND:/i, "");
   } else {
     // User session — get their venue's station
     const cookieStore = await cookies();
@@ -168,6 +169,9 @@ export async function POST(req: NextRequest) {
 
       stationId = venue?.noaa_station_id ?? null;
     }
+
+    // Strip "GHCND:" prefix if present — we add it ourselves when calling NOAA
+    if (stationId) stationId = stationId.replace(/^GHCND:/i, "");
 
     if (!stationId) {
       return NextResponse.json(

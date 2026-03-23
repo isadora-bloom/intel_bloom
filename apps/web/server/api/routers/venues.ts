@@ -40,7 +40,10 @@ export const venuesRouter = router({
       if (input.competitorRadiusMiles !== undefined) updateData.competitor_radius_miles = input.competitorRadiusMiles;
       if (input.contributesToBenchmark !== undefined) updateData.contributes_to_benchmark = input.contributesToBenchmark;
       if (input.googleTrendsMetro !== undefined) updateData.google_trends_metro = input.googleTrendsMetro;
-      if (input.noaaStationId !== undefined) updateData.noaa_station_id = input.noaaStationId;
+      if (input.noaaStationId !== undefined) {
+        // Always store bare GHCND ID — strip "GHCND:" prefix if user pastes the full form
+        updateData.noaa_station_id = input.noaaStationId.replace(/^GHCND:/i, "");
+      }
       if (input.fedDistrict !== undefined) updateData.fed_district = input.fedDistrict;
       if (input.trendsCustomTerms !== undefined) updateData.trends_custom_terms = input.trendsCustomTerms;
 
