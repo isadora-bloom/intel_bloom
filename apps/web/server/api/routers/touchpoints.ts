@@ -186,7 +186,7 @@ export const touchpointsRouter = router({
         .update({
           matched_inquiry_id: input.action === "confirm" ? input.inquiryId : null,
           match_status: status,
-          match_reviewed_by: ctx.userId,
+          match_reviewed_by: ctx.user.id,
           match_reviewed_at: new Date().toISOString(),
         })
         .eq("id", input.signalId)
