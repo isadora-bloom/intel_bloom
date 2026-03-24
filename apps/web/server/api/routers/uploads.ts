@@ -217,7 +217,7 @@ async function applySignalToClient(
               .select("referral_count")
               .eq("id", candidates[0].id)
               .single()
-              .then(({ data: c }) => {
+              .then(({ data: c }: { data: { referral_count: number } | null }) => {
                 if (c) {
                   supabase
                     .from("clients")
