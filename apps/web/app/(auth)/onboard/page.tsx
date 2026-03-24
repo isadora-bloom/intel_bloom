@@ -87,19 +87,20 @@ export default function OnboardPage() {
   async function handleComplete() {
     if (!venueId) return;
     setSaving(true);
-    const vp: Record<string, unknown> = {};
-    if (awarenessChannels.length)
-      vp.awareness_channels = pf(awarenessChannels, "user_input", "confirmed");
-
-    await supabase.from("venues").update({
-      onboarding_complete: true,
-      onboarding_step: 3,
-      funnel_config: { awareness_channels: awarenessChannels },
-      venue_profile: vp,
-      ...(briefingEmail ? { briefing_email: briefingEmail } : {}),
-    }).eq("id", venueId);
-
-    router.push("/dashboard");
+    setError(null);
+    try {
+      const res = await fetch("/api/venues/complete-onboarding", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ venueId, awarenessChannels, briefingEmail }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Something went wrong");
+      router.push("/dashboard");
+    } catch (err: any) {
+      setError(err.message ?? "Something went wrong");
+      setSaving(false);
+    }
   }
 
   // Progress dots
