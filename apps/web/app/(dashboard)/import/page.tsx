@@ -174,7 +174,7 @@ export default function ImportPage() {
   const [knotFileText, setKnotFileText] = useState<string | null>(null);
   const [knotPlatform, setKnotPlatform] = useState<"the_knot" | "wedding_wire">("the_knot");
   const [knotPreview, setKnotPreview] = useState<{
-    summary: { totalRecords: number; namedRecords: number; profileViews: number; profileSaves: number; websiteClickthroughs: number };
+    summary: { totalProfileViews: number; totalProfileSaves: number; totalWebsiteClickthroughs: number; totalInquiries: number; namedProfileViews: number; namedProfileSaves: number; namedWebsiteClickthroughs: number; namedInquiries: number; totalAnonymous: number; matchableRecords: number };
     sampleRecords: Array<{ date: string; name: string; signalType: string; platform: string }>;
     totalRecords: number;
     namedRecords: number;
@@ -715,11 +715,11 @@ export default function ImportPage() {
               </div>
               <div className="bg-gray-50 rounded p-3">
                 <p className="text-gray-500">Profile views</p>
-                <p className="text-xl font-bold text-gray-900 mt-0.5">{knotPreview.summary.profileViews}</p>
+                <p className="text-xl font-bold text-gray-900 mt-0.5">{knotPreview.summary.totalProfileViews}</p>
               </div>
               <div className="bg-gray-50 rounded p-3">
                 <p className="text-gray-500">Saves / clicks</p>
-                <p className="text-xl font-bold text-gray-900 mt-0.5">{(knotPreview.summary.profileSaves ?? 0) + (knotPreview.summary.websiteClickthroughs ?? 0)}</p>
+                <p className="text-xl font-bold text-gray-900 mt-0.5">{(knotPreview.summary.totalProfileSaves ?? 0) + (knotPreview.summary.totalWebsiteClickthroughs ?? 0)}</p>
               </div>
             </div>
             {knotPreview.sampleRecords.length > 0 && (
