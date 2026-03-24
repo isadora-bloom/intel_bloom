@@ -3,64 +3,114 @@ import { router, venueProcedure } from "@/lib/trpc/server";
 import { TRPCError } from "@trpc/server";
 
 export const analyticsRouter = router({
-  // Source ROI breakdown
+  // Source ROI breakdown — with spend, cost-per-outcome, and intent breakdown
   sourceROI: venueProcedure
     .input(z.object({
       yearFrom: z.number().int().optional(),
       yearTo: z.number().int().optional(),
-      dateFrom: z.string().optional(),  // ISO date — filters by inquired_at when set
+      dateFrom: z.string().optional(),
     }))
     .query(async ({ ctx, input }) => {
-      // Fetch clients + venue profile (for estimated revenue fallback) in parallel
-      let query = ctx.supabase
+      let clientQuery = ctx.supabase
         .from("clients")
         .select("resolved_source, status, revenue_cents, review_star_rating, review_left, referrals_generated, complexity_score")
         .eq("venue_id", ctx.venueId)
         .not("resolved_source", "is", null);
 
       if (input.dateFrom) {
-        query = query.gte("inquired_at", input.dateFrom);
+        clientQuery = clientQuery.gte("inquired_at", input.dateFrom);
       } else {
-        if (input.yearFrom) query = query.gte("event_year", input.yearFrom);
-        if (input.yearTo) query = query.lte("event_year", input.yearTo);
+        if (input.yearFrom) clientQuery = clientQuery.gte("event_year", input.yearFrom);
+        if (input.yearTo)   clientQuery = clientQuery.lte("event_year", input.yearTo);
       }
 
-      const [{ data, error }, { data: venueData }] = await Promise.all([
-        query,
+      // Build date range for spend lookup
+      const spendFrom = input.dateFrom
+        ? input.dateFrom.slice(0, 7) + "-01"
+        : input.yearFrom ? `${input.yearFrom}-01-01` : null;
+      const spendTo = input.yearTo ? `${input.yearTo}-12-01` : null;
+
+      const [
+        { data, error },
+        { data: venueData },
+        { data: spendData },
+        { data: inquiryIntentData },
+      ] = await Promise.all([
+        clientQuery,
         ctx.supabase.from("venues").select("venue_profile").eq("id", ctx.venueId).single(),
+        // Channel spend — sum per channel over the period (graceful if table doesn't exist yet)
+        ctx.supabase
+          .from("channel_spend")
+          .select("channel, amount_cents, month")
+          .eq("venue_id", ctx.venueId)
+          .then(r => {
+            if (r.error?.message?.includes("does not exist")) return { data: [], error: null };
+            return r;
+          })
+          .then(r => {
+            if (!spendFrom && !spendTo) return r;
+            // Filter in memory — simpler than chaining Supabase filters after .then()
+            const filtered = (r.data ?? []).filter((row: any) => {
+              if (spendFrom && row.month < spendFrom) return false;
+              if (spendTo   && row.month > spendTo)   return false;
+              return true;
+            });
+            return { data: filtered, error: null };
+          }),
+        // Inquiry intent breakdown per resolved_source
+        ctx.supabase
+          .from("inquiries")
+          .select("resolved_source, inquiry_intent, first_contact_channel")
+          .eq("venue_id", ctx.venueId)
+          .not("resolved_source", "is", null)
+          .then(r => {
+            if (r.error?.message?.includes("does not exist") ||
+                r.error?.message?.includes("column") ) return { data: [], error: null };
+            return r;
+          }),
       ]);
+
       if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
 
-      // Parse estimated package value from bucket for fallback display
+      // Spend: sum per channel in cents
+      const spendByChannel = new Map<string, number>();
+      for (const row of spendData ?? []) {
+        spendByChannel.set(row.channel, (spendByChannel.get(row.channel) ?? 0) + row.amount_cents);
+      }
+
+      // Intent: chosen vs. also_contacted per source
+      const intentBySource = new Map<string, { chosen: number; blast: number; unknown: number }>();
+      for (const row of inquiryIntentData ?? []) {
+        const src = row.resolved_source as string;
+        if (!intentBySource.has(src)) intentBySource.set(src, { chosen: 0, blast: 0, unknown: 0 });
+        const i = intentBySource.get(src)!;
+        if (row.inquiry_intent === "chosen")         i.chosen++;
+        else if (row.inquiry_intent === "also_contacted") i.blast++;
+        else i.unknown++;
+      }
+
       const bucketToMidpointCents: Record<string, number> = {
-        "Under $5k": 2500_00, "$5–10k": 7500_00, "$10–15k": 12500_00,
-        "$15–20k": 17500_00, "$20–30k": 25000_00, "$30k+": 35000_00,
+        "Under $5k": 250000, "$5–10k": 750000, "$10–15k": 1250000,
+        "$15–20k": 1750000, "$20–30k": 2500000, "$30k+": 3500000,
       };
       const vp = (venueData?.venue_profile as Record<string, any>) ?? {};
       const estimatedRevCents = bucketToMidpointCents[vp.avg_package_value_bucket?.value] ?? null;
 
-      // Aggregate by source
       const sourceMap = new Map<string, {
-        inquiryCount: number;
-        bookedCount: number;
-        totalRevenue: number;
-        revenueCount: number;
-        totalComplexity: number;
-        complexityCount: number;
-        reviewCount: number;
-        totalReferrals: number;
+        inquiryCount: number; bookedCount: number;
+        totalRevenue: number; revenueCount: number;
+        totalComplexity: number; complexityCount: number;
+        reviewCount: number; totalReferrals: number;
       }>();
 
       for (const client of data ?? []) {
         const source = client.resolved_source as string;
-        if (!sourceMap.has(source)) {
-          sourceMap.set(source, {
-            inquiryCount: 0, bookedCount: 0,
-            totalRevenue: 0, revenueCount: 0,
-            totalComplexity: 0, complexityCount: 0,
-            reviewCount: 0, totalReferrals: 0,
-          });
-        }
+        if (!sourceMap.has(source)) sourceMap.set(source, {
+          inquiryCount: 0, bookedCount: 0,
+          totalRevenue: 0, revenueCount: 0,
+          totalComplexity: 0, complexityCount: 0,
+          reviewCount: 0, totalReferrals: 0,
+        });
         const s = sourceMap.get(source)!;
         s.inquiryCount++;
         if (!["inquiry", "archived"].includes(client.status as string)) s.bookedCount++;
@@ -73,17 +123,40 @@ export const analyticsRouter = router({
       return Array.from(sourceMap.entries()).map(([source, stats]) => {
         const realAvgRev = stats.revenueCount > 0 ? Math.round(stats.totalRevenue / stats.revenueCount) : null;
         const avgRevenue = realAvgRev ?? estimatedRevCents;
-        const avgRevenueIsEstimate = realAvgRev === null && estimatedRevCents !== null;
+        const spendCents = spendByChannel.get(source) ?? 0;
+        const intent = intentBySource.get(source) ?? { chosen: 0, blast: 0, unknown: 0 };
+
+        // Cost-per-outcome (null if no spend recorded)
+        const cpp = (spendCents > 0 && stats.bookedCount > 0)
+          ? Math.round(spendCents / stats.bookedCount) : null;
+        const cpi = (spendCents > 0 && stats.inquiryCount > 0)
+          ? Math.round(spendCents / stats.inquiryCount) : null;
+        const cpr = (spendCents > 0 && stats.totalRevenue > 0)
+          ? Math.round((spendCents / stats.totalRevenue) * 100) / 100 : null; // $ per $1 revenue
+
         return {
           source,
-          inquiryCount: stats.inquiryCount,
-          bookedCount: stats.bookedCount,
-          conversionRate: stats.inquiryCount > 0 ? stats.bookedCount / stats.inquiryCount : 0,
+          inquiryCount:        stats.inquiryCount,
+          bookedCount:         stats.bookedCount,
+          conversionRate:      stats.inquiryCount > 0 ? stats.bookedCount / stats.inquiryCount : 0,
           avgRevenue,
-          avgRevenueIsEstimate,
-          avgComplexityScore: stats.complexityCount > 0 ? Math.round(stats.totalComplexity / stats.complexityCount) : null,
-          reviewRate: stats.bookedCount > 0 ? stats.reviewCount / stats.bookedCount : 0,
-          totalReferrals: stats.totalReferrals,
+          avgRevenueIsEstimate: realAvgRev === null && estimatedRevCents !== null,
+          avgComplexityScore:  stats.complexityCount > 0 ? Math.round(stats.totalComplexity / stats.complexityCount) : null,
+          reviewRate:          stats.bookedCount > 0 ? stats.reviewCount / stats.bookedCount : 0,
+          totalReferrals:      stats.totalReferrals,
+          // Spend & cost
+          spendCents,
+          costPerInquiry:      cpi,
+          costPerBooking:      cpp,
+          costPerRevenueDollar: cpr,
+          // Intent breakdown
+          intentChosen:        intent.chosen,
+          intentBlast:         intent.blast,
+          blastRate:           (intent.chosen + intent.blast) > 0
+                                 ? intent.blast / (intent.chosen + intent.blast) : null,
+          // Blast-adjusted conversion (chosen inquiries only)
+          chosenConversionRate: intent.chosen > 0
+                                 ? stats.bookedCount / intent.chosen : null,
         };
       });
     }),
@@ -975,4 +1048,58 @@ export const analyticsRouter = router({
 
       return { monthly, topSources, totalSessions, hasData: totalRows > 0 };
     }),
+
+  // ── COMPETING VENUES MENTIONS ─────────────────────────────────────────────
+  // Aggregates all competitor names mentioned across client records and tours.
+  // Answers: "Which venues are couples comparing us to, and how often?"
+  //
+  // Sources:
+  //   clients.competing_venues[]  — populated by confirmed upload signals
+  //   tours.competing_venues[]    — self-reported at tour intake
+  //
+  // Returns venues ranked by total mentions, with a breakdown of how many
+  // mentions came from client records (post-signal confirmation) vs. tour intake.
+  getCompetingVenuesMentions: venueProcedure.query(async ({ ctx }) => {
+    const [{ data: clients }, { data: tours }] = await Promise.all([
+      ctx.supabase
+        .from("clients")
+        .select("competing_venues")
+        .eq("venue_id", ctx.venueId)
+        .not("competing_venues", "eq", "{}"),
+      ctx.supabase
+        .from("tours")
+        .select("competing_venues")
+        .eq("venue_id", ctx.venueId)
+        .not("competing_venues", "eq", "{}"),
+    ]);
+
+    const counts = new Map<string, { clientMentions: number; tourMentions: number }>();
+
+    const normalise = (name: string) => name.trim().toLowerCase();
+
+    for (const row of clients ?? []) {
+      for (const raw of (row.competing_venues as string[]) ?? []) {
+        const key = normalise(raw);
+        if (!counts.has(key)) counts.set(key, { clientMentions: 0, tourMentions: 0 });
+        counts.get(key)!.clientMentions++;
+      }
+    }
+
+    for (const row of tours ?? []) {
+      for (const raw of (row.competing_venues as string[]) ?? []) {
+        const key = normalise(raw);
+        if (!counts.has(key)) counts.set(key, { clientMentions: 0, tourMentions: 0 });
+        counts.get(key)!.tourMentions++;
+      }
+    }
+
+    return Array.from(counts.entries())
+      .map(([name, stats]) => ({
+        name,
+        totalMentions: stats.clientMentions + stats.tourMentions,
+        clientMentions: stats.clientMentions,
+        tourMentions: stats.tourMentions,
+      }))
+      .sort((a, b) => b.totalMentions - a.totalMentions);
+  }),
 });

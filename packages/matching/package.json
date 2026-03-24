@@ -1,0 +1,12 @@
+{
+  "name": "@bloom/matching",
+  "version": "0.1.0",
+  "main": "./engine.ts",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0",
+    "@types/node": "^20.0.0"
+  }
+}

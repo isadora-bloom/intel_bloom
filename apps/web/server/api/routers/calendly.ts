@@ -1,6 +1,11 @@
 import { z } from "zod";
 import { router, venueProcedure } from "@/lib/trpc/server";
 import { TRPCError } from "@trpc/server";
+import {
+  parseCalendlyQA,
+  shouldOverrideInquirySource,
+  confidenceToScore,
+} from "@/lib/parsers/calendly-qa";
 
 const CALENDLY_BASE = "https://api.calendly.com";
 
@@ -169,13 +174,66 @@ export const calendlyRouter = router({
           synced++;
           syncedUris.add(eventUri);
 
-          // If we matched a client and have an extracted event date, backfill it
-          if (clientId && extractedEventDate) {
+          // ── Parse Q&A for richer signals ────────────────────────────────
+          if (clientId && qa.length > 0) {
+            const parsed = parseCalendlyQA(qa);
+
+            const { data: existingClient } = await ctx.supabase
+              .from("clients")
+              .select("event_date, resolved_source, guest_count_initial, status")
+              .eq("id", clientId)
+              .single();
+
+            const clientUpdates: Record<string, unknown> = {};
+
+            // Backfill wedding date if client has none
+            const dateToUse = parsed.weddingDate ?? extractedEventDate;
+            if (dateToUse && !existingClient?.event_date) {
+              clientUpdates.event_date = dateToUse;
+            }
+
+            // Backfill guest count if client has none
+            if (parsed.guestCount !== null && existingClient?.guest_count_initial == null) {
+              clientUpdates.guest_count_initial = parsed.guestCount;
+            }
+
+            // Update source attribution if the new signal is better
+            if (
+              parsed.resolvedSource &&
+              shouldOverrideInquirySource(
+                existingClient?.resolved_source ?? null,
+                existingClient?.status ?? null,
+                parsed.resolvedSource,
+                parsed.sourceConfidence,
+              )
+            ) {
+              clientUpdates.resolved_source = parsed.resolvedSource;
+              clientUpdates.resolved_source_confidence = confidenceToScore(parsed.sourceConfidence);
+
+              if (existingClient?.resolved_source !== parsed.resolvedSource) {
+                await ctx.supabase.from("activity_log").insert({
+                  venue_id: ctx.venueId,
+                  client_id: clientId,
+                  event_type: "source_attribution_updated",
+                  note: `Source updated from Calendly Q&A: "${parsed.selfReportedSource}"`,
+                  created_at: new Date().toISOString(),
+                }).then(() => {}); // best-effort
+              }
+            }
+
+            if (Object.keys(clientUpdates).length > 0) {
+              await ctx.supabase
+                .from("clients")
+                .update(clientUpdates)
+                .eq("id", clientId);
+            }
+          } else if (clientId && extractedEventDate) {
+            // Fallback: no Q&A but we have a date from the raw question
             await ctx.supabase
               .from("clients")
               .update({ event_date: extractedEventDate })
               .eq("id", clientId)
-              .is("event_date", null); // only if not already set
+              .is("event_date", null);
           }
         }
       } catch (err: any) {

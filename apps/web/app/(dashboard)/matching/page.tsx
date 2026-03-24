@@ -1,8 +1,9 @@
 "use client";
 
 import { trpc } from "@/lib/trpc/client";
-import { GitMerge, Check, X, HelpCircle } from "lucide-react";
+import { GitMerge, Check, X, HelpCircle, RefreshCw } from "lucide-react";
 import { format } from "date-fns";
+import { useState } from "react";
 
 export default function MatchingPage() {
   const { data, isLoading, refetch } = trpc.matching.listQueue.useQuery({ status: "pending", limit: 20 });
@@ -11,14 +12,45 @@ export default function MatchingPage() {
   const reject = trpc.matching.reject.useMutation({ onSuccess: () => refetch() });
   const flagUnsure = trpc.matching.flagUnsure.useMutation({ onSuccess: () => refetch() });
 
+  const [runPassResult, setRunPassResult] = useState<{ autoMatched: number; queued: number } | null>(null);
+  const runPass = trpc.matching.runPass.useMutation({
+    onSuccess: (result) => {
+      setRunPassResult(result);
+      refetch();
+    },
+  });
+
   return (
     <div className="max-w-5xl">
-      <div className="mb-6">
-        <h1 className="text-2xl font-semibold text-gray-900">Dedup & Match</h1>
-        <p className="text-sm text-gray-500 mt-0.5">
-          Review potential duplicate matches between inquiries and client records.
-          Bloom auto-confirms at 90+ confidence — anything lower lands here for your review.
-        </p>
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold text-gray-900">Dedup & Match</h1>
+          <p className="text-sm text-gray-500 mt-0.5">
+            Review potential duplicate matches between inquiries and client records.
+            Bloom auto-confirms at 90+ confidence — anything lower lands here for your review.
+          </p>
+        </div>
+        <div className="flex flex-col items-end gap-2 shrink-0">
+          <button
+            onClick={() => { setRunPassResult(null); runPass.mutate(); }}
+            disabled={runPass.isPending}
+            className="flex items-center gap-2 text-sm bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            <RefreshCw size={14} className={runPass.isPending ? "animate-spin" : ""} />
+            {runPass.isPending ? "Scanning…" : "Scan for new matches"}
+          </button>
+          {runPassResult && (
+            <p className="text-xs text-gray-500">
+              Found{" "}
+              <span className="font-medium text-green-700">{runPassResult.autoMatched} auto-match{runPassResult.autoMatched !== 1 ? "es" : ""}</span>
+              ,{" "}
+              <span className="font-medium text-yellow-700">{runPassResult.queued} queued for review</span>
+            </p>
+          )}
+          {runPass.isError && (
+            <p className="text-xs text-red-600">Scan failed — please try again</p>
+          )}
+        </div>
       </div>
 
       {isLoading && (

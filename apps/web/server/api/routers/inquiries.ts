@@ -8,6 +8,7 @@ export const inquiriesRouter = router({
       z.object({
         platform: z.string().optional(),
         matchStatus: z.enum(["unmatched", "auto_matched", "human_confirmed", "human_rejected"]).optional(),
+        intentFilter: z.string().optional(),
         dateFrom: z.string().optional(),
         dateTo: z.string().optional(),
         limit: z.number().int().default(50),
@@ -17,13 +18,17 @@ export const inquiriesRouter = router({
     .query(async ({ ctx, input }) => {
       let query = ctx.supabase
         .from("inquiries")
-        .select("*, matched_client:clients(id, name_primary, event_date, status)", { count: "exact" })
+        .select(
+          "id, name_extracted, email_extracted, phone_extracted, event_date_extracted, received_at, platform, day_of_week, self_reported_source, session_source_url, resolved_source, resolved_source_confidence, response_time_minutes, match_status, matched_client_id, inquiry_intent, touchpoint_classification, prior_signal_status, days_from_signal_to_inquiry, matched_client:clients(id, name_primary, event_date, status)",
+          { count: "exact" }
+        )
         .eq("venue_id", ctx.venueId)
         .order("received_at", { ascending: false })
         .range(input?.offset ?? 0, (input?.offset ?? 0) + (input?.limit ?? 50) - 1);
 
       if (input?.platform) query = query.eq("platform", input.platform);
       if (input?.matchStatus) query = query.eq("match_status", input.matchStatus);
+      if (input?.intentFilter) query = query.eq("inquiry_intent", input.intentFilter);
       if (input?.dateFrom) query = query.gte("received_at", input.dateFrom);
       if (input?.dateTo) query = query.lte("received_at", input.dateTo);
 
@@ -57,6 +62,14 @@ export const inquiriesRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      // Fetch inquiry first so we can propagate session data to the client
+      const { data: inquiry } = await ctx.supabase
+        .from("inquiries")
+        .select("session_data, session_source_url, self_reported_source, resolved_source, resolved_source_confidence")
+        .eq("id", input.inquiryId)
+        .eq("venue_id", ctx.venueId)
+        .single();
+
       const { error } = await ctx.supabase
         .from("inquiries")
         .update({
@@ -68,6 +81,36 @@ export const inquiriesRouter = router({
         .eq("venue_id", ctx.venueId);
 
       if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
+
+      // Propagate session data to client record (only fill gaps — don't overwrite)
+      if (inquiry) {
+        const { data: client } = await ctx.supabase
+          .from("clients")
+          .select("session_data, session_source_url, self_reported_source, resolved_source")
+          .eq("id", input.clientId)
+          .single();
+
+        const sessionUpdates: Record<string, unknown> = {};
+        if (!client?.session_data && inquiry.session_data)
+          sessionUpdates.session_data = inquiry.session_data;
+        if (!client?.session_source_url && inquiry.session_source_url)
+          sessionUpdates.session_source_url = inquiry.session_source_url;
+        if (!client?.self_reported_source && inquiry.self_reported_source)
+          sessionUpdates.self_reported_source = inquiry.self_reported_source;
+        if (!client?.resolved_source && inquiry.resolved_source) {
+          sessionUpdates.resolved_source = inquiry.resolved_source;
+          sessionUpdates.resolved_source_confidence = inquiry.resolved_source_confidence;
+        }
+
+        if (Object.keys(sessionUpdates).length > 0) {
+          await ctx.supabase
+            .from("clients")
+            .update(sessionUpdates)
+            .eq("id", input.clientId)
+            .eq("venue_id", ctx.venueId);
+        }
+      }
+
       return { success: true };
     }),
 
@@ -84,7 +127,7 @@ export const inquiriesRouter = router({
 
       if (fetchError) throw new TRPCError({ code: "NOT_FOUND" });
 
-      // Create client from inquiry data
+      // Create client from inquiry data — include session data if present
       const { data: client, error: createError } = await ctx.supabase
         .from("clients")
         .insert({
@@ -97,6 +140,12 @@ export const inquiriesRouter = router({
           first_touch_platform: inquiry.platform,
           first_touch_date: inquiry.received_at,
           status: "inquiry",
+          // Propagate session signals from inquiry
+          self_reported_source: inquiry.self_reported_source ?? null,
+          session_source_url: inquiry.session_source_url ?? null,
+          session_data: inquiry.session_data ?? null,
+          resolved_source: inquiry.resolved_source ?? null,
+          resolved_source_confidence: inquiry.resolved_source_confidence ?? null,
         })
         .select()
         .single();

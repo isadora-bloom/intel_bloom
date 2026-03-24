@@ -3,14 +3,29 @@ Things to configure before going live. Check off as you complete them.
 
 ---
 
-## SQL Migrations (run in Supabase SQL Editor)
+## SQL Migrations (run in Supabase SQL Editor, in order)
 
-- [ ] **Migration 009** — `onboarding_step`, `funnel_config`, `venue_profile` on venues
-- [ ] **Migration 010** — `calendly_api_key`, `briefing_email` on venues + `venue_invites` table
-- [ ] **Migration 011** — `hold_expires_at`, `lost_reason`, `lost_reason_note` on clients
-- [ ] **Migration 012** — `stripe_customer_id`, `stripe_subscription_id`, `plan_status`, `trial_ends_at` on venues
+- [ ] **001** — Initial schema (venues, clients, inquiries, tours, uploads, vendors, weather, macros)
+- [ ] **002** — RLS policies
+- [ ] **003** — Sensitive data cleanup function
+- [ ] **004** — Platform metrics
+- [ ] **005** — `leads` table (pre-inquiry named touches)
+- [ ] **006** — Email connections
+- [ ] **007** — Client stage transition dates (`inquired_at`, `toured_at`, `held_at`, `contracted_at`)
+- [ ] **008** — Trends custom terms
+- [ ] **009** — Venue onboarding wizard (`onboarding_step`, `funnel_config`, `venue_profile`)
+- [ ] **010** — Calendly invites (`calendly_api_key`, `briefing_email`, `venue_invites` table)
+- [ ] **011** — Hold expiry + lost reasons (`hold_expires_at`, `lost_reason`, `lost_reason_note`)
+- [ ] **012** — Stripe billing (`stripe_customer_id`, `stripe_subscription_id`, `plan_status`, `trial_ends_at`)
+- [ ] **013** — Market pulse competitors
+- [ ] **014** — Tour invitee fields + HoneyBook project ID on clients
+- [ ] **015** — Website traffic table
+- [ ] **016** — RLS fix for venues
+- [ ] **017** — Touchpoint attribution (`pre_inquiry_signals`, `channel_spend`, inquiry augmentation)
+- [ ] **018** — Reviews, review language, referrals, post-wedding sequence columns
+- [ ] **019** — Social posts + API connections
 
-All migration files are in `supabase/migrations/`.
+All migration files are in `supabase/migrations/`. Run them all before first use.
 
 ---
 
@@ -122,13 +137,15 @@ All migration files are in `supabase/migrations/`.
 
 ---
 
-## npm install (run after pulling latest)
+## Install & run
+
 ```bash
-cd apps/web
+# From repo root — installs all workspaces (apps/web + all packages/*)
 npm install
-# New packages added:
-# - stripe (billing)
-# - @sentry/nextjs (error monitoring)
+
+# Run dev server
+npm run dev
+# or: cd apps/web && npm run dev
 ```
 
 ---

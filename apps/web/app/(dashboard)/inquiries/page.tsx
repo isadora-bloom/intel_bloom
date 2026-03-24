@@ -28,7 +28,8 @@ export default function InquiriesPage() {
 
   const { data, isLoading, refetch } = trpc.inquiries.list.useQuery({
     matchStatus: matchFilter !== "all" ? matchFilter as any : undefined,
-    platform: platformFilter !== "all" ? platformFilter : undefined,
+    platform: platformFilter !== "all" && platformFilter !== "blast" ? platformFilter : undefined,
+    intentFilter: platformFilter === "blast" ? "also_contacted" : undefined,
     limit: 50,
     offset,
   });
@@ -52,7 +53,7 @@ export default function InquiriesPage() {
         <Filter size={16} className="text-gray-400" />
         <div className="flex items-center gap-2">
           <span className="text-sm text-gray-500">Platform:</span>
-          {["all", "knot", "email", "website", "instagram", "direct"].map((p) => (
+          {["all", "knot", "email", "website", "instagram", "direct", "blast"].map((p) => (
             <button
               key={p}
               onClick={() => { setPlatformFilter(p); setOffset(0); }}
@@ -125,9 +126,16 @@ export default function InquiriesPage() {
                     : "—"}
                 </td>
                 <td className="px-4 py-3">
-                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${PLATFORM_COLORS[inq.platform] ?? "bg-gray-100 text-gray-600"}`}>
-                    {inq.platform}
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${PLATFORM_COLORS[inq.platform] ?? "bg-gray-100 text-gray-600"}`}>
+                      {inq.platform}
+                    </span>
+                    {inq.inquiry_intent === "also_contacted" && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium leading-tight">
+                        blast
+                      </span>
+                    )}
+                  </div>
                 </td>
                 <td className="px-4 py-3 text-gray-500">
                   {inq.day_of_week !== null
@@ -148,9 +156,32 @@ export default function InquiriesPage() {
                     : "—"}
                 </td>
                 <td className="px-4 py-3">
-                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${MATCH_COLORS[inq.match_status] ?? "bg-gray-100 text-gray-600"}`}>
-                    {inq.match_status.replace("_", " ")}
-                  </span>
+                  <div className="flex flex-col gap-1 items-start">
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${MATCH_COLORS[inq.match_status] ?? "bg-gray-100 text-gray-600"}`}>
+                      {inq.match_status.replace("_", " ")}
+                    </span>
+                    {inq.prior_signal_status === "confirmed" && (
+                      <span
+                        title={
+                          inq.days_from_signal_to_inquiry != null
+                            ? `Viewed profile ${inq.days_from_signal_to_inquiry} day${inq.days_from_signal_to_inquiry !== 1 ? "s" : ""} before inquiring`
+                            : "Prior engagement signal confirmed"
+                        }
+                        className="text-xs px-2 py-0.5 rounded-full font-medium bg-green-100 text-green-700 border border-green-200 cursor-default"
+                      >
+                        Prior signal ✓
+                      </span>
+                    )}
+                    {inq.prior_signal_status === "pending_review" && (
+                      <Link
+                        href="/matching"
+                        title="Possible prior engagement — click to review in the matching queue"
+                        className="text-xs px-2 py-0.5 rounded-full font-medium bg-amber-100 text-amber-700 border border-amber-200 hover:bg-amber-200 transition-colors"
+                      >
+                        Prior signal?
+                      </Link>
+                    )}
+                  </div>
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-2">

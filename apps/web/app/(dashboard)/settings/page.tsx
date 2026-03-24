@@ -2,7 +2,8 @@
 
 import { trpc } from "@/lib/trpc/client";
 import { useState, useEffect } from "react";
-import { Mail, Check, AlertCircle, Loader2, Link2, X, CloudDownload, Upload } from "lucide-react";
+import { Mail, Check, AlertCircle, Loader2, Link2, X, CloudDownload, Upload, Plus, Trash2 } from "lucide-react";
+import { getPaidChannels, TOUCHPOINTS } from "@/lib/touchpoints";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 
@@ -85,6 +86,27 @@ export default function SettingsPage() {
   const [trafficUploading, setTrafficUploading] = useState(false);
   const [trafficResult, setTrafficResult] = useState<{ upserted: number; skipped: number } | null>(null);
   const [trafficError, setTrafficError] = useState<string | null>(null);
+
+  // ── Channel spend ──────────────────────────────────────────────────────────
+  const [showSpendForm, setShowSpendForm] = useState(false);
+  const [spendForm, setSpendForm] = useState({
+    channel: "",
+    month: "",
+    amount: "",
+    billingType: "monthly_subscription" as "monthly_subscription" | "annual_subscription" | "pay_per_click" | "flat_fee",
+    notes: "",
+  });
+  const { data: channelSpend, refetch: refetchChannelSpend } = trpc.touchpoints.getChannelSpend.useQuery({});
+  const upsertChannelSpend = trpc.touchpoints.upsertChannelSpend.useMutation({
+    onSuccess: () => {
+      refetchChannelSpend();
+      setShowSpendForm(false);
+      setSpendForm({ channel: "", month: "", amount: "", billingType: "monthly_subscription", notes: "" });
+    },
+  });
+  const deleteChannelSpend = trpc.touchpoints.deleteChannelSpend.useMutation({
+    onSuccess: () => refetchChannelSpend(),
+  });
 
   const { data: setupStatus, refetch: refetchSetupStatus } = trpc.venues.getSetupStatus.useQuery();
   const { data: checklistStatus } = trpc.venues.getChecklistStatus.useQuery();
@@ -242,6 +264,51 @@ export default function SettingsPage() {
   const venueProfile = (venue as any).venue_profile ?? {};
   const funnelConfig = (venue as any).funnel_config ?? {};
 
+  // ── Channel spend helpers ──────────────────────────────────────────────────
+  const paidChannels = getPaidChannels();
+
+  function fmtDollars(cents: number): string {
+    return "$" + (cents / 100).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  }
+
+  function fmtMonth(yyyyMm: string): string {
+    const [y, m] = yyyyMm.split("-");
+    const d = new Date(parseInt(y), parseInt(m) - 1, 1);
+    return d.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+  }
+
+  function channelLabel(channelId: string): string {
+    return TOUCHPOINTS.find((t) => t.value === channelId)?.label ?? channelId;
+  }
+
+  const now = new Date();
+  const twelveMonthsAgo = `${now.getFullYear() - 1}-${String(now.getMonth() + 2).padStart(2, "0")}`;
+  const last12Total = (channelSpend ?? [])
+    .filter((s: any) => (s.month ?? "").substring(0, 7) >= twelveMonthsAgo)
+    .reduce((sum: number, s: any) => sum + (s.amount_cents ?? 0), 0);
+
+  const BILLING_LABELS: Record<string, string> = {
+    monthly_subscription:  "Monthly subscription",
+    annual_subscription:   "Annual subscription",
+    pay_per_click:         "Pay per click",
+    flat_fee:              "Flat fee",
+  };
+
+  async function handleSaveSpend() {
+    if (!spendForm.channel || !spendForm.month || !spendForm.amount) return;
+    const amountCents = Math.round(parseFloat(spendForm.amount) * 100);
+    if (isNaN(amountCents) || amountCents < 0) return;
+    // channel_spend table expects YYYY-MM-01 format
+    const monthDate = spendForm.month + "-01";
+    await upsertChannelSpend.mutateAsync({
+      channel:     spendForm.channel,
+      month:       monthDate,
+      amountCents,
+      billingType: spendForm.billingType,
+      notes:       spendForm.notes || undefined,
+    });
+  }
+
   function profileValue(key: string): string | null {
     const field = venueProfile[key];
     if (!field) return null;
@@ -369,6 +436,155 @@ export default function SettingsPage() {
             Update these in your setup checklist on the dashboard →
           </a>
         </div>
+      </div>
+
+      {/* ── ADVERTISING SPEND ── */}
+      <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-4">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-base font-semibold text-gray-900">Advertising spend</h2>
+            <p className="text-xs text-gray-400 mt-0.5">
+              Track what you pay each platform monthly. This unlocks real cost-per-booking calculations in Analytics.
+            </p>
+          </div>
+          <button
+            onClick={() => setShowSpendForm((v) => !v)}
+            className="flex-shrink-0 flex items-center gap-1.5 border border-gray-300 bg-white text-gray-700 px-3 py-1.5 rounded text-sm font-medium hover:bg-gray-50 transition-colors"
+          >
+            <Plus size={14} />
+            Add spend
+          </button>
+        </div>
+
+        {showSpendForm && (
+          <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 space-y-3">
+            <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide">New entry</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Channel</label>
+                <select
+                  value={spendForm.channel}
+                  onChange={(e) => setSpendForm((f) => ({ ...f, channel: e.target.value }))}
+                  className="w-full border border-gray-300 rounded px-3 py-2 text-sm bg-white"
+                >
+                  <option value="">Select channel…</option>
+                  {["Directories", "Search & Maps", "Social — Paid"].map((cat) => (
+                    <optgroup key={cat} label={cat}>
+                      {paidChannels
+                        .filter((c) => c.category === cat)
+                        .map((c) => (
+                          <option key={c.id} value={c.id}>{c.label}</option>
+                        ))}
+                    </optgroup>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Month</label>
+                <input
+                  type="month"
+                  value={spendForm.month}
+                  onChange={(e) => setSpendForm((f) => ({ ...f, month: e.target.value }))}
+                  className="w-full border border-gray-300 rounded px-3 py-2 text-sm bg-white"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Amount ($)</label>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  placeholder="e.g. 299"
+                  value={spendForm.amount}
+                  onChange={(e) => setSpendForm((f) => ({ ...f, amount: e.target.value }))}
+                  className="w-full border border-gray-300 rounded px-3 py-2 text-sm bg-white"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Billing type</label>
+                <select
+                  value={spendForm.billingType}
+                  onChange={(e) => setSpendForm((f) => ({ ...f, billingType: e.target.value as typeof spendForm.billingType }))}
+                  className="w-full border border-gray-300 rounded px-3 py-2 text-sm bg-white"
+                >
+                  <option value="monthly_subscription">Monthly subscription</option>
+                  <option value="annual_subscription">Annual subscription (split monthly)</option>
+                  <option value="pay_per_click">Pay per click</option>
+                  <option value="flat_fee">Flat fee</option>
+                </select>
+              </div>
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-medium text-gray-700 mb-1">Notes <span className="font-normal text-gray-400">(optional)</span></label>
+                <input
+                  type="text"
+                  placeholder="e.g. Enhanced listing tier"
+                  value={spendForm.notes}
+                  onChange={(e) => setSpendForm((f) => ({ ...f, notes: e.target.value }))}
+                  className="w-full border border-gray-300 rounded px-3 py-2 text-sm bg-white"
+                />
+              </div>
+            </div>
+            <div className="flex items-center gap-3 pt-1">
+              <button
+                onClick={handleSaveSpend}
+                disabled={upsertChannelSpend.isPending || !spendForm.channel || !spendForm.month || !spendForm.amount}
+                className="flex items-center gap-1.5 bg-blue-600 text-white px-4 py-2 rounded text-sm font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
+              >
+                {upsertChannelSpend.isPending ? <><Loader2 size={13} className="animate-spin" /> Saving…</> : "Save"}
+              </button>
+              <button onClick={() => setShowSpendForm(false)} className="text-sm text-gray-500 hover:text-gray-700 transition-colors">
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {channelSpend && channelSpend.length > 0 ? (
+          <div className="overflow-x-auto rounded-lg border border-gray-200">
+            <table className="text-xs w-full">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  <th className="text-left px-3 py-2 font-medium text-gray-500">Channel</th>
+                  <th className="text-left px-3 py-2 font-medium text-gray-500">Month</th>
+                  <th className="text-right px-3 py-2 font-medium text-gray-500">Amount</th>
+                  <th className="text-left px-3 py-2 font-medium text-gray-500">Type</th>
+                  <th className="px-3 py-2" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {channelSpend.map((row: any) => (
+                  <tr key={row.id} className="hover:bg-gray-50">
+                    <td className="px-3 py-2 text-gray-900 font-medium">{channelLabel(row.channel)}</td>
+                    <td className="px-3 py-2 text-gray-600">{fmtMonth((row.month ?? "").substring(0, 7))}</td>
+                    <td className="px-3 py-2 text-gray-900 text-right font-medium">{fmtDollars(row.amount_cents)}</td>
+                    <td className="px-3 py-2 text-gray-400">{row.billing_type ? BILLING_LABELS[row.billing_type] : "—"}</td>
+                    <td className="px-3 py-2 text-right">
+                      <button
+                        onClick={() => deleteChannelSpend.mutate({ id: row.id })}
+                        className="text-gray-300 hover:text-red-500 transition-colors"
+                        title="Delete"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          !showSpendForm && (
+            <p className="text-sm text-gray-400">No spend tracked yet. Click "Add spend" to get started.</p>
+          )
+        )}
+
+        {channelSpend && channelSpend.length > 0 && (
+          <p className="text-xs text-gray-500">
+            Total tracked spend:{" "}
+            <span className="font-semibold text-gray-900">{fmtDollars(last12Total)}</span>{" "}
+            (last 12 months)
+          </p>
+        )}
       </div>
 
       {/* Gmail connection */}

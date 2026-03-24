@@ -310,4 +310,33 @@ export const clientsRouter = router({
       if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
       return data;
     }),
+
+  // Update social reach — tracks social following / post reach for a past couple.
+  // Useful for identifying "ambassador" clients whose wedding posts drove significant
+  // organic awareness. Set manually by the coordinator after checking.
+  //
+  // social_reach shape (all optional):
+  //   { instagram_followers, instagram_post_url, reach_estimate, notes }
+  updateSocialReach: venueProcedure
+    .input(
+      z.object({
+        clientId: z.string().uuid(),
+        socialReach: z.object({
+          instagram_followers: z.number().int().optional(),
+          instagram_post_url:  z.string().url().optional(),
+          reach_estimate:      z.number().int().optional(),
+          notes:               z.string().max(500).optional(),
+        }),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { error } = await ctx.supabase
+        .from("clients")
+        .update({ social_reach: input.socialReach })
+        .eq("id", input.clientId)
+        .eq("venue_id", ctx.venueId);
+
+      if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
+      return { success: true };
+    }),
 });

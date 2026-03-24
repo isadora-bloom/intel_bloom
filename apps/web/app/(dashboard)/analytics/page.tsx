@@ -539,13 +539,33 @@ export default function AnalyticsPage() {
                   <th className="text-right py-2 pr-4">Conv. rate</th>
                   <th className="text-right py-2 pr-4">Avg revenue</th>
                   <th className="text-right py-2 pr-4">Complexity</th>
-                  <th className="text-right py-2">Review rate</th>
+                  <th className="text-right py-2 pr-4">Review rate</th>
+                  <th className="text-right py-2 pr-4 text-[10px]">Spend</th>
+                  <th className="text-right py-2 pr-4 text-[10px]">Cost/booking</th>
+                  <th className="text-right py-2 text-[10px]">Cost/$1 rev</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
                 {sourceROI.map((row: any) => (
                   <tr key={row.source} className="hover:bg-gray-50">
-                    <td className="py-2.5 pr-4 font-medium text-gray-900">{row.source}</td>
+                    <td className="py-2.5 pr-4 font-medium text-gray-900">
+                      {row.source}
+                      {/* Intent breakdown sub-line */}
+                      {(row.blastRate > 0 || (row.chosenConversionRate != null && Math.abs(row.chosenConversionRate - row.conversionRate) >= 5)) && (
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          {row.blastRate > 0 && (
+                            <span className="text-[10px] px-1.5 py-0 rounded-full bg-amber-100 text-amber-700 font-medium leading-4">
+                              {Math.round(row.blastRate)}% blast
+                            </span>
+                          )}
+                          {row.chosenConversionRate != null && Math.abs(row.chosenConversionRate - row.conversionRate) >= 5 && (
+                            <span className="text-[10px] text-gray-400" title="Conversion rate among inquiries that chose you specifically (excluding blast)">
+                              {pct(row.chosenConversionRate)} chosen only
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </td>
                     <td className="text-right py-2.5 pr-4 text-gray-600">{row.inquiryCount}</td>
                     <td className="text-right py-2.5 pr-4 text-gray-600">{row.bookedCount}</td>
                     <td className="text-right py-2.5 pr-4 text-gray-600">{pct(row.conversionRate)}</td>
@@ -553,7 +573,22 @@ export default function AnalyticsPage() {
                       {row.avgRevenue ? `$${(row.avgRevenue / 100).toLocaleString()}` : "—"}
                     </td>
                     <td className="text-right py-2.5 pr-4 text-gray-600">{row.avgComplexityScore ?? "—"}</td>
-                    <td className="text-right py-2.5 text-gray-600">{pct(row.reviewRate)}</td>
+                    <td className="text-right py-2.5 pr-4 text-gray-600">{pct(row.reviewRate)}</td>
+                    <td className="text-right py-2.5 pr-4 text-xs text-gray-500">
+                      {row.spendCents > 0
+                        ? `$${(row.spendCents / 100).toLocaleString()}/mo`
+                        : <a href="/settings#spend" className="text-gray-400 hover:text-gray-600 text-[10px]">Add spend →</a>}
+                    </td>
+                    <td className="text-right py-2.5 pr-4 text-xs text-gray-500">
+                      {row.costPerBooking != null
+                        ? `$${(row.costPerBooking / 100).toLocaleString()}`
+                        : "—"}
+                    </td>
+                    <td className="text-right py-2.5 text-xs text-gray-500">
+                      {row.costPerRevenueDollar != null
+                        ? `$${(row.costPerRevenueDollar / 100).toFixed(2)}`
+                        : "—"}
+                    </td>
                   </tr>
                 ))}
               </tbody>

@@ -166,6 +166,69 @@ async function applySignalToClient(
         updates.competing_venues = [...existing, signal.value];
       }
       break;
+    case "referral_detail":
+      // Create a referrals row — this couple was referred by someone.
+      // signal.value is the referring person's name or description
+      // (e.g. "Sarah Thompson, October 2023 wedding").
+      // We create the referral record and try a loose name match to find
+      // the referring client. Human can confirm the link in the matching queue.
+      await (async () => {
+        const referringName = signal.value.trim();
+
+        // Attempt to find a matching past client by name
+        const namePart = referringName.split(",")[0].trim(); // strip date hints
+        const firstName = namePart.split(/\s+/)[0];
+        const { data: candidates } = await supabase
+          .from("clients")
+          .select("id, name_primary")
+          .eq("venue_id", venueId)
+          .ilike("name_primary", `%${firstName}%`)
+          .neq("id", clientId)
+          .limit(5);
+
+        // Build the referral row
+        const referralRow: Record<string, unknown> = {
+          venue_id: venueId,
+          referred_client_id: clientId,
+          referring_name: referringName,
+          source: "sage_extracted",
+        };
+
+        // If exactly one candidate matches, auto-link with a pending_review status
+        // so a human can confirm. Never auto-confirm.
+        if (candidates && candidates.length === 1) {
+          referralRow.referring_client_id = candidates[0].id;
+        }
+
+        const { data: referral } = await supabase
+          .from("referrals")
+          .insert(referralRow)
+          .select("id")
+          .single();
+
+        // Increment referral_count on the referring client if we have a match
+        if (referral && candidates && candidates.length === 1) {
+          await supabase.rpc("increment_referral_count", {
+            p_client_id: candidates[0].id,
+          }).catch(() => {
+            // Fallback if RPC not available: manual increment
+            supabase
+              .from("clients")
+              .select("referral_count")
+              .eq("id", candidates[0].id)
+              .single()
+              .then(({ data: c }) => {
+                if (c) {
+                  supabase
+                    .from("clients")
+                    .update({ referral_count: ((c.referral_count as number) ?? 0) + 1 })
+                    .eq("id", candidates[0].id);
+                }
+              });
+          });
+        }
+      })();
+      break;
   }
 
   if (Object.keys(updates).length > 0) {

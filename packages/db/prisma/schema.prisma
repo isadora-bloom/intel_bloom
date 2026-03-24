@@ -21,7 +21,7 @@ model Venue {
   addressLine1 String? @map("address_line1")
   addressLine2 String? @map("address_line2")
   city        String
-  state       String   @db.VarChar(2)
+  state       String
   zip         String
   lat         Decimal? @db.Decimal(9, 6)
   lng         Decimal? @db.Decimal(9, 6)
@@ -47,7 +47,7 @@ model Venue {
   // Aggregate pool
   contributesToBenchmark Boolean @default(true) @map("contributes_to_benchmark")
 
-  // Relations
+  // Relations — original
   venueUsers            VenueUser[]
   clients               Client[]
   inquiries             Inquiry[]
@@ -63,6 +63,16 @@ model Venue {
   patternBenchmarks     PatternBenchmark[]
   marketPulse           MarketPulse[]
   sourceTouchpoints     ClientSourceTouchpoint[]
+  // Relations — added (migrations 005, 015, 017, 018, 019)
+  leads                 Lead[]
+  preInquirySignals     PreInquirySignal[]
+  channelSpend          ChannelSpend[]
+  reviews               Review[]
+  reviewLanguage        ReviewLanguage[]
+  referrals             Referral[]
+  socialPosts           SocialPost[]
+  socialApiConnections  SocialApiConnection[]
+  websiteTraffic        WebsiteTraffic[]
 
   @@map("venues")
 }
@@ -142,7 +152,7 @@ model Client {
   staffingHoursActual   Int?   @map("staffing_hours_actual")
   dayOfComplexity       Int?   @map("day_of_complexity")
 
-  // Reputation
+  // Reputation (snapshot fields from 001)
   reviewLeft          Boolean?  @map("review_left")
   reviewPlatform      String?   @map("review_platform")
   reviewStarRating    Decimal?  @map("review_star_rating") @db.Decimal(2, 1)
@@ -153,19 +163,56 @@ model Client {
   socialReach         Json?     @map("social_reach")
   referralsGenerated  Int       @default(0) @map("referrals_generated")
 
-  // Relations
-  venue           Venue                    @relation(fields: [venueId], references: [id], onDelete: Cascade)
-  referrer        Client?                  @relation("ClientReferrals", fields: [referrerClientId], references: [id])
-  referredClients Client[]                 @relation("ClientReferrals")
+  // Stage transition dates (migration 007)
+  inquiredAt   DateTime? @map("inquired_at") @db.Date
+  touredAt     DateTime? @map("toured_at") @db.Date
+  heldAt       DateTime? @map("held_at") @db.Date
+  contractedAt DateTime? @map("contracted_at") @db.Date
+
+  // Hold & loss (migration 011)
+  holdExpiresAt  DateTime? @map("hold_expires_at") @db.Timestamptz(6)
+  lostReason     String?   @map("lost_reason")
+  lostReasonNote String?   @map("lost_reason_note")
+
+  // HoneyBook integration (migration 014)
+  honeyBookProjectId String?   @map("honeybook_project_id")
+  inquiryDate        DateTime? @map("inquiry_date") @db.Timestamptz(6)
+
+  // Review request sequence (migration 018)
+  reviewRequestedAt  DateTime? @map("review_requested_at") @db.Timestamptz(6)
+  reviewRequestCount Int       @default(0) @map("review_request_count")
+  reviewSubmitted    Boolean   @default(false) @map("review_submitted")
+  reviewSubmittedAt  DateTime? @map("review_submitted_at") @db.Timestamptz(6)
+
+  // Referral tracking (migration 018)
+  referralCount    Int       @default(0) @map("referral_count")
+  referralNotedAt  DateTime? @map("referral_noted_at") @db.Timestamptz(6)
+
+  // Post-wedding sequence (migration 018)
+  postWeddingDay2Sent         DateTime? @map("post_wedding_day2_sent") @db.Timestamptz(6)
+  postWeddingDay14Sent        DateTime? @map("post_wedding_day14_sent") @db.Timestamptz(6)
+  postWeddingDay30Sent        DateTime? @map("post_wedding_day30_sent") @db.Timestamptz(6)
+  postWeddingDay90Sent        DateTime? @map("post_wedding_day90_sent") @db.Timestamptz(6)
+  postWeddingAnniversarySent  DateTime? @map("post_wedding_anniversary_sent") @db.Timestamptz(6)
+
+  // Relations — original
+  venue             Venue                    @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  referrer          Client?                  @relation("ClientReferrals", fields: [referrerClientId], references: [id])
+  referredClients   Client[]                 @relation("ClientReferrals")
   sourceTouchpoints ClientSourceTouchpoint[]
-  inquiries       Inquiry[]
-  tours           Tour[]
-  uploads         Upload[]
-  planningEvents  PlanningEvent[]
-  clientVendors   ClientVendor[]
-  weatherForecasts WeatherForecast[]
-  matchingQueueA  MatchingQueue[]          @relation("MatchQueueRecordA")
-  matchingQueueB  MatchingQueue[]          @relation("MatchQueueRecordB")
+  inquiries         Inquiry[]
+  tours             Tour[]
+  uploads           Upload[]
+  planningEvents    PlanningEvent[]
+  clientVendors     ClientVendor[]
+  weatherForecasts  WeatherForecast[]
+  matchingQueueA    MatchingQueue[]          @relation("MatchQueueRecordA")
+  matchingQueueB    MatchingQueue[]          @relation("MatchQueueRecordB")
+  // Relations — added (migrations 005, 018)
+  leads             Lead[]
+  reviews           Review[]
+  referralsGiven    Referral[]               @relation("ReferralFrom")
+  referralsReceived Referral[]               @relation("ReferralTo")
 
   @@map("clients")
 }
@@ -183,6 +230,10 @@ model ClientSourceTouchpoint {
   campaignName  String?   @map("campaign_name")
   costCents     Int?      @map("cost_cents")
   rawData       Json?     @map("raw_data")
+  // Touchpoint classification (migration 017)
+  touchpointType String?  @map("touchpoint_type")
+  confidence     String?  @default("confirmed")
+  signalSource   String?  @default("manual") @map("signal_source")
 
   client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
   venue  Venue  @relation(fields: [venueId], references: [id], onDelete: Cascade)
@@ -217,8 +268,12 @@ model Inquiry {
   hourOfDay   Int?      @map("hour_of_day")
 
   // Attribution
-  campaignId   String? @map("campaign_id")
-  sessionData  Json?   @map("session_data")
+  campaignId          String? @map("campaign_id")
+  sessionData         Json?   @map("session_data")
+  selfReportedSource  String? @map("self_reported_source")
+  sessionSourceUrl    String? @map("session_source_url")
+  resolvedSource      String? @map("resolved_source")
+  resolvedSourceConfidence Int? @map("resolved_source_confidence")
 
   // Matching
   matchedClientId   String? @map("matched_client_id") @db.Uuid
@@ -229,14 +284,21 @@ model Inquiry {
   responseSentAt       DateTime? @map("response_sent_at") @db.Timestamptz(6)
   responseTimeMinutes  Int?      @map("response_time_minutes")
 
-  // Resolved attribution
-  selfReportedSource        String? @map("self_reported_source")
-  resolvedSource            String? @map("resolved_source")
-  resolvedSourceConfidence  Int?    @map("resolved_source_confidence")
-  sessionSourceUrl          String? @map("session_source_url")
+  // Touchpoint attribution (migration 017)
+  inquiryIntent              String?  @default("unknown") @map("inquiry_intent")
+  firstContactChannel        String?  @map("first_contact_channel")
+  touchpointClassification   String?  @default("unknown") @map("touchpoint_classification")
+  priorSignalId              String?  @map("prior_signal_id") @db.Uuid
+  priorSignalConfidence      Int?     @map("prior_signal_confidence")
+  priorSignalStatus          String?  @default("not_searched") @map("prior_signal_status")
+  daysFromSignalToInquiry    Int?     @map("days_from_signal_to_inquiry")
 
-  venue         Venue   @relation(fields: [venueId], references: [id], onDelete: Cascade)
-  matchedClient Client? @relation(fields: [matchedClientId], references: [id])
+  venue             Venue             @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  matchedClient     Client?           @relation(fields: [matchedClientId], references: [id])
+  // preInquirySignals that matched to this inquiry
+  preInquirySignals PreInquirySignal[]
+  // referrals that arrived through this inquiry
+  referrals         Referral[]
 
   @@map("inquiries")
 }
@@ -265,6 +327,14 @@ model Tour {
   // Outcome
   bookingDate           DateTime? @map("booking_date") @db.Date
   bookingConversionDays Int?      @map("booking_conversion_days")
+
+  // Invitee fields from Calendly sync (migration 014)
+  inviteeName  String? @map("invitee_name")
+  inviteeEmail String? @map("invitee_email")
+  inviteePhone String? @map("invitee_phone")
+  inviteeQa    Json?   @map("invitee_qa")
+  externalId   String? @map("external_id")
+  source       String?
 
   venue  Venue   @relation(fields: [venueId], references: [id], onDelete: Cascade)
   client Client? @relation(fields: [clientId], references: [id])
@@ -447,7 +517,8 @@ model WeatherForecast {
   conditions      String?
   alertTriggered  Boolean  @default(false) @map("alert_triggered")
 
-  venue Venue @relation(fields: [venueId], references: [id])
+  venue  Venue   @relation(fields: [venueId], references: [id])
+  client Client? @relation(fields: [clientId], references: [id])
 
   @@map("weather_forecasts")
 }
@@ -526,8 +597,8 @@ model MatchingQueue {
   signalsMatched   Json?  @map("signals_matched")
   signalsUnmatched Json?  @map("signals_unmatched")
 
-  status      String   @default("pending")
-  reviewedBy  String?  @map("reviewed_by") @db.Uuid
+  status      String    @default("pending")
+  reviewedBy  String?   @map("reviewed_by") @db.Uuid
   reviewedAt  DateTime? @map("reviewed_at") @db.Timestamptz(6)
   trainingLogged Boolean @default(false) @map("training_logged")
 
@@ -547,12 +618,10 @@ model PatternBenchmark {
   calculatedAt  DateTime @default(now()) @map("calculated_at") @db.Timestamptz(6)
   benchmarkType String   @map("benchmark_type")
 
-  // Segmentation
   segmentVenueType String? @map("segment_venue_type")
   segmentRegion    String? @map("segment_region")
   segmentPriceTier String? @map("segment_price_tier")
 
-  // Values
   p25        Decimal? @db.Decimal(10, 2)
   p50        Decimal? @db.Decimal(10, 2)
   p75        Decimal? @db.Decimal(10, 2)
@@ -574,11 +643,9 @@ model MarketPulse {
   calculatedAt DateTime @default(now()) @map("calculated_at") @db.Timestamptz(6)
   validUntil   DateTime? @map("valid_until") @db.Timestamptz(6)
 
-  // Composite scores
   demandOutlook String?  @map("demand_outlook")
   demandScore   Int?     @map("demand_score")
 
-  // Component snapshots
   consumerConfidenceLatest   Decimal? @map("consumer_confidence_latest") @db.Decimal(10, 4)
   consumerConfidenceTrend    String?  @map("consumer_confidence_trend")
   searchVolumeVsSeasonal     Int?     @map("search_volume_vs_seasonal")
@@ -587,11 +654,247 @@ model MarketPulse {
   regionalEconomySummary     String?  @map("regional_economy_summary")
   weatherCautionMonths       String[] @map("weather_caution_months")
   competitorChangeAlert      String?  @map("competitor_change_alert")
-
-  // Full output
   fullSummary Json? @map("full_summary")
 
   venue Venue @relation(fields: [venueId], references: [id])
 
   @@map("market_pulse")
+}
+
+// ============================================================
+// LEADS — pre-inquiry named touches (migration 005)
+// ============================================================
+model Lead {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId         String    @map("venue_id") @db.Uuid
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  sourceDate      DateTime? @map("source_date") @db.Date
+  platform        String
+  touchType       String    @map("touch_type")
+  name            String?
+  rawActivity     String?   @map("raw_activity")
+  linkedInquiryId String?   @map("linked_inquiry_id") @db.Uuid
+  linkedClientId  String?   @map("linked_client_id") @db.Uuid
+  source          String    @default("capture_upload")
+
+  venue         Venue    @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  linkedInquiry Inquiry? @relation(fields: [linkedInquiryId], references: [id], onDelete: SetNull)
+  linkedClient  Client?  @relation(fields: [linkedClientId], references: [id], onDelete: SetNull)
+
+  @@map("leads")
+}
+
+// ============================================================
+// PRE-INQUIRY SIGNALS — directory views/saves before inquiry (migration 017)
+// ============================================================
+model PreInquirySignal {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId      String    @map("venue_id") @db.Uuid
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  platform     String
+  firstName    String    @map("first_name")
+  lastInitial  String    @map("last_initial") @db.Char(1)
+  signalType   String    @map("signal_type")
+  occurredAt   DateTime  @map("occurred_at") @db.Timestamptz(6)
+  rawData      Json?     @map("raw_data")
+  importSource String    @default("manual_import") @map("import_source")
+
+  // Match results
+  matchedInquiryId  String?   @map("matched_inquiry_id") @db.Uuid
+  matchConfidence   Int?      @map("match_confidence")
+  matchStatus       String    @default("unmatched") @map("match_status")
+  matchReviewedBy   String?   @map("match_reviewed_by") @db.Uuid
+  matchReviewedAt   DateTime? @map("match_reviewed_at") @db.Timestamptz(6)
+
+  venue          Venue    @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  matchedInquiry Inquiry? @relation(fields: [matchedInquiryId], references: [id], onDelete: SetNull)
+
+  @@unique([venueId, platform, firstName, lastInitial, signalType, occurredAt])
+  @@map("pre_inquiry_signals")
+}
+
+// ============================================================
+// CHANNEL SPEND — monthly ad spend per platform (migration 017)
+// ============================================================
+model ChannelSpend {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId     String   @map("venue_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  channel     String
+  month       DateTime @db.Date
+  amountCents Int      @map("amount_cents")
+  notes       String?
+  billingType String?  @map("billing_type")
+
+  venue Venue @relation(fields: [venueId], references: [id], onDelete: Cascade)
+
+  @@unique([venueId, channel, month])
+  @@map("channel_spend")
+}
+
+// ============================================================
+// REVIEWS — collected from all platforms (migration 018)
+// ============================================================
+model Review {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId          String    @map("venue_id") @db.Uuid
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  platform         String
+  platformReviewId String?   @map("platform_review_id")
+  platformUrl      String?   @map("platform_url")
+  reviewerName     String?   @map("reviewer_name")
+  rating           Decimal?  @db.Decimal(2, 1)
+  reviewText       String?   @map("review_text")
+  reviewDate       DateTime? @map("review_date") @db.Date
+  weddingDateMentioned DateTime? @map("wedding_date_mentioned") @db.Date
+
+  // Match to client
+  matchedClientId  String?   @map("matched_client_id") @db.Uuid
+  matchConfidence  Int?      @map("match_confidence")
+  matchStatus      String    @default("unmatched") @map("match_status")
+  matchReviewedBy  String?   @map("match_reviewed_by") @db.Uuid
+  matchReviewedAt  DateTime? @map("match_reviewed_at") @db.Timestamptz(6)
+
+  // AI analysis
+  sentimentScore    Decimal?  @map("sentiment_score") @db.Decimal(3, 2)
+  themes            String[]
+  standoutPhrases   String[]  @map("standout_phrases")
+  concernsMentioned String[]  @map("concerns_mentioned")
+  analysisRunAt     DateTime? @map("analysis_run_at") @db.Timestamptz(6)
+  importSource      String    @default("manual") @map("import_source")
+
+  venue         Venue   @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  matchedClient Client? @relation(fields: [matchedClientId], references: [id], onDelete: SetNull)
+
+  @@unique([venueId, platform, platformReviewId])
+  @@map("reviews")
+}
+
+// ============================================================
+// REVIEW LANGUAGE — distilled phrases from reviews (migration 018)
+// ============================================================
+model ReviewLanguage {
+  id                   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId              String   @map("venue_id") @db.Uuid
+  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  phrase               String
+  theme                String
+  frequency            Int      @default(1)
+  avgRating            Decimal? @map("avg_rating") @db.Decimal(2, 1)
+  approvedForSage      Boolean  @default(false) @map("approved_for_sage")
+  approvedForMarketing Boolean  @default(false) @map("approved_for_marketing")
+  sourceReviewIds      String[] @map("source_review_ids") @db.Uuid
+
+  venue Venue @relation(fields: [venueId], references: [id], onDelete: Cascade)
+
+  @@unique([venueId, phrase])
+  @@map("review_language")
+}
+
+// ============================================================
+// REFERRALS — tracks when a past couple refers a new inquiry (migration 018)
+// ============================================================
+model Referral {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId           String    @map("venue_id") @db.Uuid
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  referringClientId String?   @map("referring_client_id") @db.Uuid
+  referringName     String?   @map("referring_name")
+  referredClientId  String?   @map("referred_client_id") @db.Uuid
+  referredInquiryId String?   @map("referred_inquiry_id") @db.Uuid
+  // 'self_reported' | 'sage_extracted' | 'manual'
+  source            String    @default("self_reported")
+  converted         Boolean?
+  convertedAt       DateTime? @map("converted_at") @db.Timestamptz(6)
+  notes             String?
+
+  venue           Venue    @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  referringClient Client?  @relation("ReferralFrom", fields: [referringClientId], references: [id], onDelete: SetNull)
+  referredClient  Client?  @relation("ReferralTo", fields: [referredClientId], references: [id], onDelete: SetNull)
+  referredInquiry Inquiry? @relation(fields: [referredInquiryId], references: [id], onDelete: SetNull)
+
+  @@map("referrals")
+}
+
+// ============================================================
+// SOCIAL POSTS — engagement tracking (migration 019)
+// ============================================================
+model SocialPost {
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId               String    @map("venue_id") @db.Uuid
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  platform              String
+  postedAt              DateTime  @map("posted_at") @db.Timestamptz(6)
+  postType              String    @default("other") @map("post_type")
+  caption               String?
+  postUrl               String?   @map("post_url")
+  isReel                Boolean   @default(false) @map("is_reel")
+  reach                 Int?
+  impressions           Int?
+  saves                 Int?
+  shares                Int?
+  comments              Int?
+  likes                 Int?
+  websiteClicks         Int?      @map("website_clicks")
+  profileVisitsFromPost Int?      @map("profile_visits_from_post")
+  engagementRate        Decimal?  @map("engagement_rate") @db.Decimal(5, 2)
+  isViral               Boolean   @default(false) @map("is_viral")
+  importSource          String    @default("manual") @map("import_source")
+  rawMetrics            Json?     @map("raw_metrics")
+  notes                 String?
+
+  venue Venue @relation(fields: [venueId], references: [id], onDelete: Cascade)
+
+  @@unique([venueId, platform, postedAt, postType])
+  @@map("social_posts")
+}
+
+// ============================================================
+// SOCIAL API CONNECTIONS — OAuth tokens per platform (migration 019)
+// ============================================================
+model SocialApiConnection {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId      String    @map("venue_id") @db.Uuid
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  platform     String
+  // Last 4 chars only — real token never stored here
+  tokenHint    String?   @map("token_hint")
+  scopes       String[]
+  connectedAt  DateTime? @map("connected_at") @db.Timestamptz(6)
+  lastSyncedAt DateTime? @map("last_synced_at") @db.Timestamptz(6)
+  isActive     Boolean   @default(true) @map("is_active")
+  errorMessage String?   @map("error_message")
+
+  venue Venue @relation(fields: [venueId], references: [id], onDelete: Cascade)
+
+  @@unique([venueId, platform])
+  @@map("social_api_connections")
+}
+
+// ============================================================
+// WEBSITE TRAFFIC — GA/analytics export (migration 015)
+// ============================================================
+model WebsiteTraffic {
+  id                        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId                   String   @map("venue_id") @db.Uuid
+  date                      DateTime @db.Date
+  sessions                  Int?
+  users                     Int?
+  newUsers                  Int?     @map("new_users")
+  pageviews                 Int?
+  bounceRate                Decimal? @map("bounce_rate") @db.Decimal(5, 2)
+  avgSessionDurationSeconds Int?     @map("avg_session_duration_seconds")
+  source                    String?
+  medium                    String?
+  uploadedAt                DateTime @default(now()) @map("uploaded_at") @db.Timestamptz(6)
+
+  venue Venue @relation(fields: [venueId], references: [id])
+
+  @@unique([venueId, date, source, medium])
+  @@map("website_traffic")
 }

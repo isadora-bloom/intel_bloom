@@ -168,6 +168,26 @@ export default function ImportPage() {
   const [fileName, setFileName] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // ── Directory activity import state ───────────────────────────────────────
+  const [knotDragOver, setKnotDragOver] = useState(false);
+  const [knotFileName, setKnotFileName] = useState<string | null>(null);
+  const [knotFileText, setKnotFileText] = useState<string | null>(null);
+  const [knotPlatform, setKnotPlatform] = useState<"the_knot" | "wedding_wire">("the_knot");
+  const [knotPreview, setKnotPreview] = useState<{
+    summary: { totalRecords: number; namedRecords: number; profileViews: number; profileSaves: number; websiteClickthroughs: number };
+    sampleRecords: Array<{ date: string; name: string; signalType: string; platform: string }>;
+    totalRecords: number;
+    namedRecords: number;
+  } | null>(null);
+  const [knotResult, setKnotResult] = useState<{ inserted: number; skipped: number; totalNamedRecords: number } | null>(null);
+
+  const previewKnotImport = trpc.touchpoints.previewKnotImport.useMutation({
+    onSuccess: (data) => setKnotPreview(data),
+  });
+  const importKnotActivity = trpc.touchpoints.importKnotActivity.useMutation({
+    onSuccess: (data) => setKnotResult(data),
+  });
+
   const upsertMutation = trpc.clients.upsertFromImport.useMutation();
   const utils = trpc.useUtils();
 
@@ -203,6 +223,32 @@ export default function ImportPage() {
     const file = e.dataTransfer.files[0];
     if (file) handleFile(file);
   }, []);
+
+  // ── Knot/WW directory import handlers ────────────────────────────────────
+  function handleKnotFile(file: File) {
+    if (!file.name.endsWith(".csv") && !file.name.endsWith(".txt")) {
+      alert("Please upload a .csv or .txt file.");
+      return;
+    }
+    setKnotFileName(file.name);
+    setKnotPreview(null);
+    setKnotResult(null);
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target?.result as string;
+      setKnotFileText(text);
+      previewKnotImport.mutate({ csvText: text });
+    };
+    reader.readAsText(file);
+  }
+
+  const onKnotDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setKnotDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) handleKnotFile(file);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [knotPlatform]);
 
   function updateMapping(field: keyof ColumnMapping, value: string) {
     setMapping((prev) => ({ ...prev, [field]: value }));
@@ -585,6 +631,130 @@ export default function ImportPage() {
           </div>
         </div>
       )}
+
+      {/* ── DIRECTORY ACTIVITY (Knot / WW) ── */}
+      <div className="space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold text-gray-900">Directory activity</h2>
+          <p className="text-sm text-gray-500 mt-0.5">
+            Import profile views, saves, and website clicks from The Knot or WeddingWire.
+            This lets Bloom match pre-inquiry engagement to your actual bookings — and hold platforms accountable for real cost-per-booking.
+          </p>
+        </div>
+
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800 space-y-1">
+          <p className="font-medium">No official API — yet</p>
+          <p className="text-amber-700 text-xs">
+            The Knot and WeddingWire don't provide official data APIs. Export your Storefront Activity report manually
+            and import it here. Every import builds the dataset that makes the case for demanding API access.
+            You can import as many months as you have — duplicates are automatically skipped.
+          </p>
+        </div>
+
+        {/* Platform toggle */}
+        <div className="flex items-center gap-3">
+          <span className="text-sm text-gray-600 font-medium">Platform:</span>
+          {(["the_knot", "wedding_wire"] as const).map((p) => (
+            <button
+              key={p}
+              onClick={() => setKnotPlatform(p)}
+              className={`text-sm px-3 py-1.5 rounded border transition-colors ${
+                knotPlatform === p
+                  ? "bg-blue-600 text-white border-blue-600"
+                  : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"
+              }`}
+            >
+              {p === "the_knot" ? "The Knot" : "WeddingWire"}
+            </button>
+          ))}
+        </div>
+
+        {/* Drop zone */}
+        <div
+          onDragOver={(e) => { e.preventDefault(); setKnotDragOver(true); }}
+          onDragLeave={() => setKnotDragOver(false)}
+          onDrop={onKnotDrop}
+          onClick={() => document.getElementById("knot-file-input")?.click()}
+          className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors ${
+            knotDragOver ? "border-blue-400 bg-blue-50" : "border-gray-300 hover:border-gray-400"
+          }`}
+        >
+          <UploadCloud size={24} className="mx-auto text-gray-400 mb-2" />
+          {knotFileName ? (
+            <p className="text-sm font-medium text-gray-700">{knotFileName}</p>
+          ) : (
+            <>
+              <p className="text-sm text-gray-600">Drop your Storefront Activity export here</p>
+              <p className="text-xs text-gray-400 mt-1">Accepts .csv or .txt</p>
+            </>
+          )}
+        </div>
+        <input
+          id="knot-file-input"
+          type="file"
+          accept=".csv,.txt"
+          className="hidden"
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) handleKnotFile(f); e.target.value = ""; }}
+        />
+
+        {/* Preview */}
+        {previewKnotImport.isPending && (
+          <p className="text-sm text-gray-400">Parsing file…</p>
+        )}
+        {knotPreview && (
+          <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-3">
+            <p className="text-sm font-semibold text-gray-800">Preview</p>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+              <div className="bg-gray-50 rounded p-3">
+                <p className="text-gray-500">Total records</p>
+                <p className="text-xl font-bold text-gray-900 mt-0.5">{knotPreview.totalRecords}</p>
+              </div>
+              <div className="bg-gray-50 rounded p-3">
+                <p className="text-gray-500">Named (matchable)</p>
+                <p className="text-xl font-bold text-gray-900 mt-0.5">{knotPreview.namedRecords}</p>
+              </div>
+              <div className="bg-gray-50 rounded p-3">
+                <p className="text-gray-500">Profile views</p>
+                <p className="text-xl font-bold text-gray-900 mt-0.5">{knotPreview.summary.profileViews}</p>
+              </div>
+              <div className="bg-gray-50 rounded p-3">
+                <p className="text-gray-500">Saves / clicks</p>
+                <p className="text-xl font-bold text-gray-900 mt-0.5">{(knotPreview.summary.profileSaves ?? 0) + (knotPreview.summary.websiteClickthroughs ?? 0)}</p>
+              </div>
+            </div>
+            {knotPreview.sampleRecords.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-gray-500 mb-1">Sample names</p>
+                <div className="flex flex-wrap gap-1">
+                  {knotPreview.sampleRecords.map((r, i) => (
+                    <span key={i} className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full border border-blue-100">
+                      {r.name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            <button
+              onClick={() => knotFileText && importKnotActivity.mutate({ csvText: knotFileText, platform: knotPlatform })}
+              disabled={importKnotActivity.isPending || !knotFileText}
+              className="flex items-center gap-2 bg-blue-600 text-white px-5 py-2 rounded text-sm font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
+            >
+              {importKnotActivity.isPending ? "Importing…" : `Import ${knotPreview.namedRecords} signals`}
+            </button>
+          </div>
+        )}
+
+        {/* Result */}
+        {knotResult && (
+          <div className="flex items-center gap-2 text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg px-4 py-3">
+            <CheckCircle2 size={16} />
+            <span>
+              Imported <strong>{knotResult.inserted}</strong> new signal{knotResult.inserted !== 1 ? "s" : ""}.{" "}
+              {knotResult.skipped > 0 && <>{knotResult.skipped} already existed and were skipped.</>}
+            </span>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

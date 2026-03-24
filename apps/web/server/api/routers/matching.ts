@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { router, venueProcedure } from "@/lib/trpc/server";
 import { TRPCError } from "@trpc/server";
+import { runMatchingPass } from "@bloom/matching/engine";
 
 export const matchingRouter = router({
   // List pending matching queue items
@@ -124,6 +125,12 @@ export const matchingRouter = router({
       .eq("venue_id", ctx.venueId)
       .eq("status", "pending");
     return { count: count ?? 0 };
+  }),
+
+  // Run a full matching pass for this venue: auto-match at 90+, queue 60-89 for review
+  runPass: venueProcedure.mutation(async ({ ctx }) => {
+    const { autoMatched, queued } = await runMatchingPass(ctx.venueId);
+    return { autoMatched, queued };
   }),
 
   // Scan the whole venue's data for likely duplicates and queue them
