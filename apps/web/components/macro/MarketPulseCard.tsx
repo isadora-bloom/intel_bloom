@@ -34,7 +34,18 @@ export default function MarketPulseCard({ pulse }: { pulse: Pulse }) {
     return (
       <div className="bg-white rounded-lg border border-gray-200 p-6">
         <h2 className="text-base font-semibold text-gray-900 mb-2">Market Pulse</h2>
-        <p className="text-sm text-gray-400">Calculating market conditions for your venue...</p>
+        <p className="text-sm text-gray-500 mb-3">
+          No pulse score yet. Market Pulse needs weather and economic data to calculate.
+        </p>
+        <div className="text-xs text-gray-400 space-y-1">
+          <p>To generate your first pulse:</p>
+          <ol className="list-decimal list-inside space-y-1 text-gray-500">
+            <li>Go to <a href="/settings" className="text-blue-600 hover:underline">Settings → Intelligence Calibration</a></li>
+            <li>Set your NOAA station ID and click <strong>Populate</strong> (weather data)</li>
+            <li>Set your Federal Reserve district and click <strong>Populate</strong> (FRED data)</li>
+            <li>Click <strong>Refresh</strong> next to Market Pulse score</li>
+          </ol>
+        </div>
       </div>
     );
   }

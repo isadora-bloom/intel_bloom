@@ -262,12 +262,6 @@ function EventTab({ client, vendors }: { client: any; vendors: any[] }) {
         <Row label="Weather score" value={client.weather_difficulty_score ? `${client.weather_difficulty_score}/10` : null} />
       </Section>
 
-      {client.weather_event_date && (
-        <Section title="Weather on event day">
-          <pre className="text-xs text-gray-600 bg-gray-50 p-3 rounded">{JSON.stringify(client.weather_event_date, null, 2)}</pre>
-        </Section>
-      )}
-
       {vendors.length > 0 && (
         <Section title="Vendors">
           <div className="flex flex-wrap gap-2">

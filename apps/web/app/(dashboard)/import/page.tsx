@@ -569,12 +569,20 @@ export default function ImportPage() {
               Skipped rows were missing a client name or had an error.
             </div>
           )}
-          <Link
-            href="/clients"
-            className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-700"
-          >
-            View your clients <ArrowRight size={14} />
-          </Link>
+          <div className="flex flex-wrap items-center gap-4">
+            <Link
+              href="/clients"
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-700"
+            >
+              View your clients <ArrowRight size={14} />
+            </Link>
+            <Link
+              href="/settings#calibration"
+              className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700"
+            >
+              Score weather data in Settings →
+            </Link>
+          </div>
         </div>
       )}
     </div>

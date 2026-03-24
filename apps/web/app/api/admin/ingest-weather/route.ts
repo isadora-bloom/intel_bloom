@@ -29,17 +29,23 @@ function calculateWeatherScore(
   tempMinF: number | null
 ): number {
   let score = 0;
+  // Precipitation thresholds (monthly average inches)
   if (precipInches !== null) {
-    if (precipInches > 0.5) score += 3;
+    if (precipInches > 0.5) score += 2;
     if (precipInches > 1.5) score += 2;
     if (precipInches > 3.0) score += 2;
   }
+  // Temperature thresholds — these are MONTHLY AVERAGES so 95°F would never trigger.
+  // VA July avg TMAX ~88-92°F. Use realistic thresholds.
   if (tempMaxF !== null) {
-    if (tempMaxF > 95) score += 2;
-    if (tempMaxF < 32) score += 2;
+    if (tempMaxF > 85) score += 1; // warm month
+    if (tempMaxF > 90) score += 2; // hot month — outdoor discomfort
+    if (tempMaxF < 45) score += 2; // cold month
+    if (tempMaxF < 32) score += 1; // freezing daytime avg (extreme)
   }
   if (tempMinF !== null) {
-    if (tempMinF < 20) score += 1;
+    if (tempMinF < 32) score += 1; // freezing nights
+    if (tempMinF < 20) score += 1; // dangerously cold nights
   }
   return Math.min(score, 10);
 }
@@ -55,10 +61,12 @@ async function fetchAndUpsertMonth(
   const startDate = `${year}-${String(month).padStart(2, "0")}-01`;
   const endDate = getLastDayOfMonth(year, month);
 
+  // No &units=standard — use NOAA's default metric units:
+  //   PRCP = tenths of mm, TMAX/TMIN/TAVG = tenths of °C
   const url =
     `${CDO_BASE}/data?datasetid=GSOM&stationid=GHCND:${stationId}` +
     `&startdate=${startDate}&enddate=${endDate}` +
-    `&datatypeid=PRCP,TMAX,TMIN,TAVG&units=standard&limit=1000`;
+    `&datatypeid=PRCP,TMAX,TMIN,TAVG&limit=1000`;
 
   const response = await fetch(url, { headers: { token: noaaToken } });
 
@@ -83,7 +91,9 @@ async function fetchAndUpsertMonth(
     const val = parseFloat(r.value);
     if (isNaN(val)) continue;
     switch (r.datatype) {
-      case "PRCP": precip = val / 10; break;
+      // NOAA metric: PRCP = tenths of mm → convert to inches
+      case "PRCP": precip = val / 10 / 25.4; break;
+      // NOAA metric: TMAX/TMIN/TAVG = tenths of °C → convert to °F
       case "TMAX": tempMax = (val / 10) * 1.8 + 32; break;
       case "TMIN": tempMin = (val / 10) * 1.8 + 32; break;
       case "TAVG": tempAvg = (val / 10) * 1.8 + 32; break;

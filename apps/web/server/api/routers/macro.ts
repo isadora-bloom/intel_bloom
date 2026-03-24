@@ -147,10 +147,12 @@ export const macroRouter = router({
 
     if (!venue?.noaa_station_id) return null;
 
+    const stationId = venue.noaa_station_id.replace(/^GHCND:/i, "");
+
     const { data, error } = await ctx.supabase
       .from("weather_monthly")
       .select("year, month, precipitation_inches, temp_max_f")
-      .eq("noaa_station_id", venue.noaa_station_id)
+      .eq("noaa_station_id", stationId)
       .order("year", { ascending: false })
       .order("month", { ascending: true });
 

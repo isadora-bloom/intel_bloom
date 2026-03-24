@@ -49,9 +49,9 @@ export default function AnnotationsPage() {
     <div className="max-w-4xl">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-semibold text-gray-900">Annotations</h1>
+          <h1 className="text-2xl font-semibold text-gray-900">Data Flags</h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            Contextual flags that protect data integrity in your pattern analysis
+            Flag unusual periods so Bloom doesn't treat them as normal patterns — e.g. venue closed, platform outage, staffing change.
           </p>
         </div>
       </div>

@@ -2,7 +2,7 @@
 
 import { trpc } from "@/lib/trpc/client";
 import { useState, useEffect } from "react";
-import { Mail, Check, AlertCircle, Loader2, Link2, X, CloudDownload } from "lucide-react";
+import { Mail, Check, AlertCircle, Loader2, Link2, X, CloudDownload, Upload } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 
@@ -80,6 +80,14 @@ export default function SettingsPage() {
   const [fredResult, setFredResult] = useState<{ ingested: number } | null>(null);
   const [pulsing, setPulsing] = useState(false);
   const [pulseResult, setPulseResult] = useState<boolean | null>(null);
+  const [backfillingWeather, setBackfillingWeather] = useState(false);
+  const [backfillWeatherResult, setBackfillWeatherResult] = useState<{ backfilled: number; skipped: number } | null>(null);
+  const [trafficUploading, setTrafficUploading] = useState(false);
+  const [trafficResult, setTrafficResult] = useState<{ upserted: number; skipped: number } | null>(null);
+  const [trafficError, setTrafficError] = useState<string | null>(null);
+
+  const { data: setupStatus, refetch: refetchSetupStatus } = trpc.venues.getSetupStatus.useQuery();
+  const { data: checklistStatus } = trpc.venues.getChecklistStatus.useQuery();
 
   const [form, setForm] = useState({
     googlePlaceId: "",
@@ -138,9 +146,21 @@ export default function SettingsPage() {
     try {
       const res = await fetch("/api/macro/fred", { method: "POST" });
       const json = await res.json();
-      if (json.ingested !== undefined) setFredResult({ ingested: json.ingested });
+      if (json.ingested !== undefined) { setFredResult({ ingested: json.ingested }); refetchSetupStatus(); }
     } finally {
       setFredIngesting(false);
+    }
+  }
+
+  async function handleBackfillClientWeather() {
+    setBackfillingWeather(true);
+    setBackfillWeatherResult(null);
+    try {
+      const res = await fetch("/api/admin/backfill-client-weather", { method: "POST" });
+      const json = await res.json();
+      if (json.ok) { setBackfillWeatherResult({ backfilled: json.backfilled, skipped: json.skipped }); refetchSetupStatus(); }
+    } finally {
+      setBackfillingWeather(false);
     }
   }
 
@@ -178,7 +198,7 @@ export default function SettingsPage() {
     try {
       const res = await fetch("/api/admin/ingest-weather", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
       const json = await res.json();
-      if (json.ok) setWeatherResult({ monthsIngested: json.monthsIngested, errors: json.errors });
+      if (json.ok) { setWeatherResult({ monthsIngested: json.monthsIngested, errors: json.errors }); refetchSetupStatus(); }
     } finally {
       setWeatherIngesting(false);
     }
@@ -188,6 +208,29 @@ export default function SettingsPage() {
     const result = await scan.mutateAsync({ maxEmails: 200, daysBack: 730 });
     setScanResult(result);
     refetchEmail();
+  }
+
+  async function handleTrafficUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setTrafficUploading(true);
+    setTrafficResult(null);
+    setTrafficError(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/admin/import-traffic", { method: "POST", body: fd });
+      const json = await res.json();
+      if (json.ok) {
+        setTrafficResult({ upserted: json.upserted, skipped: json.skipped });
+      } else {
+        setTrafficError(json.error ?? "Upload failed");
+      }
+    } finally {
+      setTrafficUploading(false);
+      // Reset file input so same file can be re-uploaded
+      e.target.value = "";
+    }
   }
 
   if (!venue) return <div className="text-sm text-gray-400 p-8">Loading...</div>;
@@ -486,6 +529,28 @@ export default function SettingsPage() {
           </Link>
         </div>
 
+        {/* Calendly connection */}
+        <div className="rounded-lg bg-gray-50 border border-gray-200 px-4 py-3 flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm font-medium text-gray-700">Calendly</p>
+            <p className="text-xs text-gray-400 mt-0.5">
+              {checklistStatus?.calendlyConnected
+                ? "Connected — tour bookings sync automatically when you run a sync from here."
+                : "Not connected. Tour conversion rates won't be tracked."}
+            </p>
+          </div>
+          {checklistStatus?.calendlyConnected ? (
+            <span className="flex items-center gap-1.5 text-xs text-green-700 font-medium flex-shrink-0">
+              <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+              Connected
+            </span>
+          ) : (
+            <a href="/dashboard" className="flex-shrink-0 text-sm text-blue-600 hover:text-blue-800 font-medium whitespace-nowrap">
+              Connect in setup →
+            </a>
+          )}
+        </div>
+
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Google Place ID</label>
           <input
@@ -511,6 +576,64 @@ export default function SettingsPage() {
 
       </div>
 
+      {/* ── WEBSITE TRAFFIC ── */}
+      <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-4">
+        <div>
+          <h2 className="text-base font-semibold text-gray-900">Website traffic</h2>
+          <p className="text-xs text-gray-400 mt-0.5">
+            Upload a Google Analytics CSV to track sessions and traffic sources over time.
+            Data appears in Analytics → Website traffic.
+          </p>
+        </div>
+
+        <div className="rounded-lg bg-gray-50 border border-gray-200 p-4 space-y-3">
+          <div>
+            <p className="text-sm font-medium text-gray-700 mb-1">How to export from GA4</p>
+            <ol className="text-xs text-gray-500 space-y-0.5 list-decimal list-inside">
+              <li>Open GA4 → Reports → Acquisition → Traffic acquisition</li>
+              <li>Set your date range (e.g. last 12 months)</li>
+              <li>Click the download icon → Download CSV</li>
+              <li>Upload the file here</li>
+            </ol>
+            <p className="text-xs text-gray-400 mt-2">
+              Both date-aggregated and source/medium CSVs work.
+              Re-uploading the same period is safe — rows are upserted.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <label className={`flex items-center gap-2 border border-gray-300 bg-white text-gray-700 px-3 py-1.5 rounded text-sm font-medium hover:bg-gray-50 transition-colors cursor-pointer ${trafficUploading ? "opacity-50 pointer-events-none" : ""}`}>
+              {trafficUploading ? (
+                <><Loader2 size={14} className="animate-spin" /> Uploading…</>
+              ) : (
+                <><Upload size={14} /> Choose CSV</>
+              )}
+              <input
+                type="file"
+                accept=".csv"
+                className="hidden"
+                onChange={handleTrafficUpload}
+                disabled={trafficUploading}
+              />
+            </label>
+
+            {trafficResult && (
+              <span className="text-xs text-green-600 flex items-center gap-1">
+                <Check size={12} />
+                {trafficResult.upserted} rows imported
+                {trafficResult.skipped > 0 && `, ${trafficResult.skipped} skipped`}
+              </span>
+            )}
+            {trafficError && (
+              <span className="text-xs text-red-600 flex items-center gap-1">
+                <AlertCircle size={12} />
+                {trafficError}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
       {/* Intelligence calibration */}
       <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-4">
         <div>
@@ -520,6 +643,55 @@ export default function SettingsPage() {
             Without them, weather, search trend, and macro signals won't appear.
           </p>
         </div>
+
+        {/* Setup status summary */}
+        {setupStatus && (
+          <div className="rounded-lg bg-gray-50 border border-gray-200 p-4 space-y-2">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Data status</p>
+            {[
+              {
+                label: "NOAA weather station",
+                ok: setupStatus.hasNoaaStation,
+                detail: setupStatus.noaaStationId ?? "not set",
+              },
+              {
+                label: "Historical weather data",
+                ok: setupStatus.weatherMonthCount > 0,
+                detail: setupStatus.weatherMonthCount > 0 ? `${setupStatus.weatherMonthCount} months` : "not populated",
+              },
+              {
+                label: "Client weather scores",
+                ok: setupStatus.clientsWithEventDate === 0 || setupStatus.clientsWithWeatherScore === setupStatus.clientsWithEventDate,
+                detail: setupStatus.clientsWithEventDate === 0
+                  ? "no clients with event dates"
+                  : `${setupStatus.clientsWithWeatherScore} of ${setupStatus.clientsWithEventDate} clients`,
+              },
+              {
+                label: "Federal Reserve district",
+                ok: setupStatus.hasFedDistrict,
+                detail: setupStatus.hasFedDistrict ? `District ${(venue as any).fed_district}` : "not set",
+              },
+              {
+                label: "FRED economic data",
+                ok: setupStatus.fredDataPoints > 0,
+                detail: setupStatus.fredDataPoints > 0 ? `${setupStatus.fredDataPoints} data points` : "not populated",
+              },
+              {
+                label: "Google Trends metro",
+                ok: setupStatus.hasTrends,
+                detail: setupStatus.googleTrendsMetro ?? "not set",
+              },
+            ].map(({ label, ok, detail }) => (
+              <div key={label} className="flex items-center justify-between text-xs">
+                <div className="flex items-center gap-2">
+                  <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${ok ? "bg-green-500" : "bg-amber-400"}`} />
+                  <span className={ok ? "text-gray-700" : "text-gray-500"}>{label}</span>
+                </div>
+                <span className={`font-medium ${ok ? "text-green-700" : "text-amber-600"}`}>{detail}</span>
+              </div>
+            ))}
+          </div>
+        )}
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -586,6 +758,7 @@ export default function SettingsPage() {
             or <span className="font-medium">USW00093738</span> (Dulles).
             Find yours at <span className="font-medium">ncdc.noaa.gov/cdo-web/datatools/findstation</span>
           </p>
+          <p className="text-xs text-blue-600 mt-1">After saving, scroll down and click "Populate" to load weather data.</p>
         </div>
 
         <div>
@@ -623,6 +796,15 @@ export default function SettingsPage() {
                 Pulls 3 years of monthly weather from NOAA for your station. Required for weather charts and season scoring.
                 Requires <span className="font-medium">NOAA_CDO_TOKEN</span> env var.
               </p>
+              {setupStatus && setupStatus.weatherMonthCount > 0 && !weatherResult && (
+                <p className="text-xs text-green-600 mt-1 flex items-center gap-1">
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-500" />
+                  {setupStatus.weatherMonthCount} months loaded
+                </p>
+              )}
+              {setupStatus && setupStatus.weatherMonthCount === 0 && !weatherIngesting && !weatherResult && (
+                <p className="text-xs text-amber-600 mt-1">No data yet — click Populate to pull from NOAA.</p>
+              )}
               {weatherResult && (
                 <p className="text-xs text-green-600 mt-1">
                   Done — {weatherResult.monthsIngested} months ingested
@@ -637,6 +819,8 @@ export default function SettingsPage() {
             >
               {weatherIngesting ? (
                 <><Loader2 size={13} className="animate-spin" /> Fetching…</>
+              ) : setupStatus && setupStatus.weatherMonthCount > 0 ? (
+                <><CloudDownload size={13} /> Re-populate</>
               ) : (
                 <><CloudDownload size={13} /> Populate</>
               )}
@@ -645,6 +829,51 @@ export default function SettingsPage() {
           {!(venue as any).noaa_station_id && (
             <p className="text-xs text-amber-600 mt-2">Set a NOAA station ID above and save first.</p>
           )}
+        </div>
+
+        {/* Backfill client weather scores */}
+        <div className="pt-4 border-t border-gray-100">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium text-gray-700">Client weather scores</p>
+              <p className="text-xs text-gray-400 mt-0.5">
+                Matches each client's event date to the monthly weather data and writes a difficulty score.
+                Run this after importing clients or populating weather data above.
+              </p>
+              {setupStatus && setupStatus.clientsWithEventDate > 0 && !backfillWeatherResult && (
+                <p className={`text-xs mt-1 flex items-center gap-1 ${
+                  setupStatus.clientsWithWeatherScore === setupStatus.clientsWithEventDate
+                    ? "text-green-600"
+                    : "text-amber-600"
+                }`}>
+                  <span className={`inline-block w-1.5 h-1.5 rounded-full ${
+                    setupStatus.clientsWithWeatherScore === setupStatus.clientsWithEventDate
+                      ? "bg-green-500"
+                      : "bg-amber-400"
+                  }`} />
+                  {setupStatus.clientsWithWeatherScore} of {setupStatus.clientsWithEventDate} clients scored
+                  {setupStatus.clientsWithWeatherScore < setupStatus.clientsWithEventDate && " — click to score the rest"}
+                </p>
+              )}
+              {backfillWeatherResult && (
+                <p className="text-xs text-green-600 mt-1">
+                  Done — {backfillWeatherResult.backfilled} clients scored
+                  {backfillWeatherResult.skipped > 0 && `, ${backfillWeatherResult.skipped} skipped (no weather data for that month)`}.
+                </p>
+              )}
+            </div>
+            <button
+              onClick={handleBackfillClientWeather}
+              disabled={backfillingWeather || !(venue as any).noaa_station_id}
+              className="flex-shrink-0 flex items-center gap-1.5 border border-gray-300 bg-white text-gray-700 px-3 py-1.5 rounded text-sm hover:bg-gray-50 transition-colors disabled:opacity-40"
+            >
+              {backfillingWeather ? (
+                <><Loader2 size={13} className="animate-spin" /> Scoring…</>
+              ) : (
+                <><Check size={13} /> Score clients</>
+              )}
+            </button>
+          </div>
         </div>
 
         {/* Populate FRED macro data */}
@@ -656,6 +885,15 @@ export default function SettingsPage() {
                 Pulls 3 years of unemployment, savings rate, disposable income, and housing starts.
                 Required for the Market Pulse economic section. Requires <span className="font-medium">FRED_API_KEY</span> env var.
               </p>
+              {setupStatus && setupStatus.fredDataPoints > 0 && !fredResult && (
+                <p className="text-xs text-green-600 mt-1 flex items-center gap-1">
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-500" />
+                  {setupStatus.fredDataPoints} data points loaded
+                </p>
+              )}
+              {setupStatus && setupStatus.fredDataPoints === 0 && !fredIngesting && !fredResult && (
+                <p className="text-xs text-amber-600 mt-1">No data yet — click Populate.</p>
+              )}
               {fredResult && (
                 <p className="text-xs text-green-600 mt-1">Done — {fredResult.ingested} data points ingested.</p>
               )}
@@ -667,6 +905,8 @@ export default function SettingsPage() {
             >
               {fredIngesting ? (
                 <><Loader2 size={13} className="animate-spin" /> Fetching…</>
+              ) : setupStatus && setupStatus.fredDataPoints > 0 ? (
+                <><CloudDownload size={13} /> Re-populate</>
               ) : (
                 <><CloudDownload size={13} /> Populate</>
               )}

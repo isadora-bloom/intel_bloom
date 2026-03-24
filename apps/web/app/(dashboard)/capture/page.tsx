@@ -602,10 +602,11 @@ export default function CapturePage() {
       <div>
         <h1 className="text-2xl font-semibold text-gray-900 flex items-center gap-2">
           <ScanLine size={22} className="text-gray-400" />
-          Quick Capture
+          Add / Capture
         </h1>
         <p className="text-sm text-gray-500 mt-0.5">
-          Drop screenshots or CSVs. Bloom will figure out what they are and where the data goes.
+          Drop a screenshot, contract PDF, or CSV. Bloom reads it and pulls out the client data.
+          For bulk HoneyBook imports, use <a href="/import" className="text-blue-600 hover:underline">Import</a> instead.
         </p>
       </div>
 

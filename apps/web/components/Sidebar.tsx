@@ -13,7 +13,6 @@ import {
   Settings,
   GitMerge,
   LogOut,
-  ScanLine,
   DownloadCloud,
   Menu,
   X,
@@ -25,15 +24,14 @@ import { useState } from "react";
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/capture", label: "Quick Capture", icon: ScanLine },
-  { href: "/inquiries", label: "Inquiries", icon: Inbox },
+  { href: "/inquiries", label: "Inquiry Log", icon: Inbox },
   { href: "/clients", label: "Clients", icon: Users },
-  { href: "/matching", label: "Matching", icon: GitMerge, badge: true },
+  { href: "/matching", label: "Dedup & Match", icon: GitMerge, badge: true },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
   { href: "/macro", label: "Market Pulse", icon: Globe },
   { href: "/vendors", label: "Vendors", icon: Store },
-  { href: "/annotations", label: "Annotations", icon: Flag },
-  { href: "/import", label: "Import", icon: DownloadCloud },
+  { href: "/annotations", label: "Data Flags", icon: Flag },
+  { href: "/import", label: "Import data", icon: DownloadCloud },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 

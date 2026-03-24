@@ -41,11 +41,15 @@ export const insightsRouter = router({
   getBriefing: venueProcedure.query(async ({ ctx }): Promise<BriefingInsight[]> => {
     const insights: BriefingInsight[] = [];
 
-    const { data: venue } = await ctx.supabase
+    const { data: venueRaw } = await ctx.supabase
       .from("venues")
       .select("noaa_station_id, google_trends_metro, fed_district, state, name, funnel_config, venue_profile")
       .eq("id", ctx.venueId)
       .single();
+
+    const venue = venueRaw
+      ? { ...venueRaw, noaa_station_id: venueRaw.noaa_station_id?.replace(/^GHCND:/i, "") ?? null }
+      : venueRaw;
 
     const [
       { data: sourceClients },
@@ -842,11 +846,15 @@ export const insightsRouter = router({
       });
 
       // Fetch venue first (needed for conditional queries below)
-      const { data: venue } = await ctx.supabase
+      const { data: venueRaw } = await ctx.supabase
         .from("venues")
         .select("name, city, state, noaa_station_id, google_trends_metro, fed_district, funnel_config, venue_profile")
         .eq("id", ctx.venueId)
         .single();
+
+      const venue = venueRaw
+        ? { ...venueRaw, noaa_station_id: venueRaw.noaa_station_id?.replace(/^GHCND:/i, "") ?? null }
+        : venueRaw;
 
       // Gather context snapshot
       const [

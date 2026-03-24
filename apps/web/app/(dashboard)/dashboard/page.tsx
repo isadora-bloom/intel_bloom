@@ -25,6 +25,11 @@ import {
   Telescope,
   Sparkles,
   X,
+  Users,
+  Star,
+  DollarSign,
+  Mail,
+  ArrowRight,
 } from "lucide-react";
 
 const SENTIMENT_STYLES: Record<
@@ -68,6 +73,118 @@ const EXAMPLE_QUESTIONS = [
   "Should I lower my June prices?",
   "Is the whole industry slow right now or just me?",
 ];
+
+// Funnel stage config — maps analytics.stagePipeline stageCounts keys to display labels
+const FUNNEL_STAGES = [
+  { key: "inquiries",  label: "Inquiries",   color: "bg-violet-400" },
+  { key: "touring",    label: "Touring",     color: "bg-blue-400" },
+  { key: "hold",       label: "On hold",     color: "bg-amber-400" },
+  { key: "contracted", label: "Contracted",  color: "bg-emerald-400" },
+  { key: "completed",  label: "Completed",   color: "bg-gray-300" },
+] as const;
+
+function formatRevenue(cents: number): string {
+  const dollars = cents / 100;
+  if (dollars >= 1_000_000) return `$${(dollars / 1_000_000).toFixed(1)}M`;
+  if (dollars >= 1_000) return `$${Math.round(dollars / 1_000)}k`;
+  return `$${Math.round(dollars)}`;
+}
+
+function StatCardSkeleton() {
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 p-5 animate-pulse">
+      <div className="flex items-start justify-between mb-3">
+        <div className="h-3 bg-gray-100 rounded w-24" />
+        <div className="w-8 h-8 bg-gray-100 rounded-lg" />
+      </div>
+      <div className="h-8 bg-gray-100 rounded w-16 mt-2" />
+    </div>
+  );
+}
+
+function StatCard({
+  label,
+  value,
+  sub,
+  icon: Icon,
+  iconBg,
+  iconColor,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  icon: React.ElementType;
+  iconBg: string;
+  iconColor: string;
+}) {
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 p-5 hover:shadow-sm transition-shadow">
+      <div className="flex items-start justify-between mb-3">
+        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">{label}</p>
+        <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${iconBg}`}>
+          <Icon size={15} className={iconColor} />
+        </div>
+      </div>
+      <p className="text-3xl font-bold text-gray-900 leading-none">{value}</p>
+      {sub && <p className="text-xs text-gray-400 mt-1.5">{sub}</p>}
+    </div>
+  );
+}
+
+function FunnelBar({ stageCounts }: { stageCounts: Record<string, number> }) {
+  const total = FUNNEL_STAGES.reduce((sum, s) => sum + (stageCounts[s.key] ?? 0), 0);
+
+  if (total === 0) {
+    return (
+      <div className="bg-gray-50 border border-dashed border-gray-200 rounded-xl p-6 text-center">
+        <p className="text-sm text-gray-400">Import clients to see your pipeline</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl p-5">
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Current pipeline</h2>
+        <span className="text-xs text-gray-400">{total} total</span>
+      </div>
+
+      {/* Stacked bar */}
+      <div className="flex rounded-full overflow-hidden h-2.5 mb-4 gap-0.5">
+        {FUNNEL_STAGES.map((stage) => {
+          const count = stageCounts[stage.key] ?? 0;
+          if (count === 0) return null;
+          const pct = (count / total) * 100;
+          return (
+            <div
+              key={stage.key}
+              className={`${stage.color} h-full rounded-full`}
+              style={{ width: `${pct}%`, minWidth: count > 0 ? "4px" : "0" }}
+              title={`${stage.label}: ${count}`}
+            />
+          );
+        })}
+      </div>
+
+      {/* Stage chips */}
+      <div className="flex flex-wrap gap-2">
+        {FUNNEL_STAGES.map((stage, i) => {
+          const count = stageCounts[stage.key] ?? 0;
+          return (
+            <div key={stage.key} className="flex items-center gap-1.5 text-xs text-gray-600">
+              <span className={`inline-block w-2 h-2 rounded-full ${stage.color}`} />
+              <span className="font-medium">{count}</span>
+              <span className="text-gray-400">{stage.label}</span>
+              {i < FUNNEL_STAGES.length - 1 && (
+                <ArrowRight size={10} className="text-gray-300 ml-0.5" />
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 function InsightCard({ insight }: { insight: BriefingInsight }) {
   const [expanded, setExpanded] = useState(false);
@@ -200,13 +317,61 @@ function AskInsight() {
 export default function DashboardPage() {
   const { data: insights, isLoading } = trpc.insights.getBriefing.useQuery(undefined, { staleTime: 1000 * 60 * 5 });
   const { data: venue } = trpc.venues.getCurrent.useQuery();
+  const { data: clientsData, isLoading: clientsLoading } = trpc.clients.list.useQuery(
+    { limit: 100, offset: 0 },
+    { staleTime: 1000 * 60 * 2 }
+  );
+  const { data: pipelineData, isLoading: pipelineLoading } = trpc.analytics.stagePipeline.useQuery(
+    undefined,
+    { staleTime: 1000 * 60 * 2 }
+  );
+
+  // This-month inquiries: use dateFrom = first day of current month
+  const monthStart = new Date();
+  monthStart.setDate(1);
+  monthStart.setHours(0, 0, 0, 0);
+  const { data: monthInquiriesData, isLoading: inquiriesLoading } = trpc.inquiries.list.useQuery(
+    { dateFrom: monthStart.toISOString(), limit: 1, offset: 0 },
+    { staleTime: 1000 * 60 * 2 }
+  );
+
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+
+  const today = new Date().toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
 
   const searchParams = useSearchParams();
   const [upgradedBannerVisible, setUpgradedBannerVisible] = useState(
     () => searchParams.get("upgraded") === "1"
   );
+
+  // Compute stats from clients list
+  const clients = clientsData?.clients ?? [];
+  const activeClients = clients.filter((c) =>
+    ["booked", "planning"].includes(c.status as string)
+  ).length;
+
+  const reviewedClients = clients.filter(
+    (c) => typeof (c as any).review_star_rating === "number"
+  );
+  const avgReview =
+    reviewedClients.length > 0
+      ? reviewedClients.reduce((sum, c) => sum + ((c as any).review_star_rating as number), 0) /
+        reviewedClients.length
+      : null;
+
+  const bookedRevenueCents = clients
+    .filter((c) => ["booked", "planning"].includes(c.status as string))
+    .reduce((sum, c) => sum + (((c as any).revenue_cents as number | null) ?? 0), 0);
+
+  const thisMonthInquiries = monthInquiriesData?.total ?? 0;
+
+  const statsLoading = clientsLoading || inquiriesLoading;
 
   return (
     <div className="max-w-3xl space-y-6">
@@ -223,14 +388,86 @@ export default function DashboardPage() {
         </div>
       )}
 
+      {/* Header */}
       <div>
-        <h1 className="text-2xl font-semibold text-gray-900">{greeting}</h1>
-        <p className="text-sm text-gray-500 mt-0.5">Here&apos;s what your data is telling you today.</p>
+        <h1 className="text-2xl font-semibold text-gray-900">
+          {greeting}{venue?.name ? `, ${venue.name}` : ""}
+        </h1>
+        <p className="text-sm text-gray-400 mt-0.5">{today}</p>
       </div>
+
+      {/* Stats row */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {statsLoading ? (
+          <>
+            <StatCardSkeleton />
+            <StatCardSkeleton />
+            <StatCardSkeleton />
+            <StatCardSkeleton />
+          </>
+        ) : (
+          <>
+            <StatCard
+              label="Active clients"
+              value={String(activeClients)}
+              sub="booked + planning"
+              icon={Users}
+              iconBg="bg-blue-50"
+              iconColor="text-blue-500"
+            />
+            <StatCard
+              label="This month"
+              value={String(thisMonthInquiries)}
+              sub={thisMonthInquiries === 0 ? "Connect Gmail to track" : "inquiries received"}
+              icon={Mail}
+              iconBg="bg-violet-50"
+              iconColor="text-violet-500"
+            />
+            <StatCard
+              label="Avg review"
+              value={avgReview !== null ? `${avgReview.toFixed(1)}★` : "—"}
+              sub={reviewedClients.length > 0 ? `${reviewedClients.length} reviews` : "No reviews yet"}
+              icon={Star}
+              iconBg="bg-amber-50"
+              iconColor="text-amber-500"
+            />
+            <StatCard
+              label="Revenue booked"
+              value={bookedRevenueCents > 0 ? formatRevenue(bookedRevenueCents) : "—"}
+              sub="booked + planning clients"
+              icon={DollarSign}
+              iconBg="bg-emerald-50"
+              iconColor="text-emerald-500"
+            />
+          </>
+        )}
+      </div>
+
+      {/* Hold alerts */}
       <HoldAlertsWidget />
+
+      {/* Setup checklist (auto-hides when complete) */}
       {venue && <SetupChecklist venueId={venue.id} />}
+
+      {/* Mini funnel bar */}
+      {pipelineLoading ? (
+        <div className="bg-white border border-gray-200 rounded-xl p-5 animate-pulse">
+          <div className="h-3 bg-gray-100 rounded w-32 mb-4" />
+          <div className="h-2.5 bg-gray-100 rounded-full mb-4" />
+          <div className="flex gap-4">
+            {[...Array(5)].map((_, i) => (
+              <div key={i} className="h-3 bg-gray-100 rounded w-16" />
+            ))}
+          </div>
+        </div>
+      ) : (
+        <FunnelBar stageCounts={pipelineData?.stageCounts ?? {}} />
+      )}
+
+      {/* Ask about your business */}
       <AskInsight />
 
+      {/* Briefing insights */}
       {isLoading && (
         <div className="space-y-3">
           {[...Array(5)].map((_, i) => (
@@ -244,21 +481,32 @@ export default function DashboardPage() {
       )}
 
       {!isLoading && insights && insights.length === 0 && (
-        <div className="border border-dashed border-gray-200 rounded-xl p-12 text-center">
-          <div className="w-12 h-12 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-4">
-            <Sparkles size={22} className="text-blue-500" />
+        <div className="border border-dashed border-gray-200 rounded-xl p-10">
+          <div className="w-10 h-10 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-4">
+            <Sparkles size={18} className="text-blue-500" />
           </div>
-          <h3 className="text-sm font-semibold text-gray-900 mb-2">Your intelligence is warming up</h3>
-          <p className="text-sm text-gray-500 max-w-sm mx-auto mb-5">
-            Connect your Gmail to scan inquiry history, then Bloom will surface patterns,
-            anomalies, and opportunities here.
+          <h3 className="text-sm font-semibold text-gray-900 mb-2 text-center">Intelligence is warming up</h3>
+          <p className="text-sm text-gray-500 max-w-sm mx-auto mb-6 text-center">
+            Bloom needs data to generate insights. Complete the steps below to unlock your briefing.
           </p>
-          <div className="flex flex-col sm:flex-row gap-2 justify-center">
-            <a href="/settings" className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700">
-              Connect Gmail
-            </a>
-            <a href="/analytics" className="inline-flex items-center gap-1.5 px-4 py-2 border border-gray-200 text-gray-700 text-sm font-medium rounded-lg hover:border-gray-400">
-              View analytics
+          <div className="max-w-sm mx-auto space-y-2 mb-6">
+            {[
+              { step: "1", label: "Import your client history", href: "/import", detail: "HoneyBook CSV or spreadsheet export" },
+              { step: "2", label: "Connect Gmail", href: "/settings", detail: "Auto-extract source attribution" },
+              { step: "3", label: "Calibrate your location signals", href: "/settings", detail: "NOAA weather station + Google Trends metro" },
+            ].map(({ step, label, href, detail }) => (
+              <a key={step} href={href} className="flex items-start gap-3 p-3 rounded-lg border border-gray-100 bg-white hover:border-blue-200 hover:bg-blue-50/30 transition-colors group">
+                <span className="flex-shrink-0 w-5 h-5 rounded-full bg-gray-100 group-hover:bg-blue-100 text-gray-500 group-hover:text-blue-600 text-xs font-bold flex items-center justify-center mt-0.5">{step}</span>
+                <div>
+                  <p className="text-sm font-medium text-gray-800 group-hover:text-blue-700">{label}</p>
+                  <p className="text-xs text-gray-400">{detail}</p>
+                </div>
+              </a>
+            ))}
+          </div>
+          <div className="text-center">
+            <a href="/analytics" className="text-xs text-gray-400 hover:text-gray-600 transition-colors">
+              View analytics without AI briefing →
             </a>
           </div>
         </div>

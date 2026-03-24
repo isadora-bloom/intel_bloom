@@ -243,6 +243,20 @@ export default function ClientsPage() {
           <h1 className="text-2xl font-semibold text-gray-900">Clients</h1>
           <p className="text-sm text-gray-500 mt-0.5">{data?.total ?? 0} records</p>
         </div>
+        <div className="flex items-center gap-2">
+          <Link
+            href="/import"
+            className="flex items-center gap-1.5 border border-gray-300 bg-white text-gray-700 px-3 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors"
+          >
+            Import CSV
+          </Link>
+          <Link
+            href="/capture"
+            className="flex items-center gap-1.5 bg-blue-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+          >
+            + Add client
+          </Link>
+        </div>
       </div>
 
       {/* Search + filters */}
@@ -293,9 +307,35 @@ export default function ClientsPage() {
             )}
             {!isLoading && (data?.clients ?? []).length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-12 text-center">
-                  <Users size={24} className="mx-auto text-gray-300 mb-2" />
-                  <p className="text-sm text-gray-400">No clients yet</p>
+                <td colSpan={6} className="px-4 py-16 text-center">
+                  <Users size={28} className="mx-auto text-gray-200 mb-3" />
+                  {statusFilter !== "all" || search ? (
+                    <>
+                      <p className="text-sm font-medium text-gray-500 mb-1">No clients match this filter</p>
+                      <p className="text-xs text-gray-400">Try clearing the search or switching to "All"</p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-sm font-medium text-gray-700 mb-1">No clients yet</p>
+                      <p className="text-xs text-gray-400 mb-4 max-w-xs mx-auto">
+                        Import from a HoneyBook CSV export, or add clients one at a time.
+                      </p>
+                      <div className="flex items-center justify-center gap-2">
+                        <Link
+                          href="/import"
+                          className="inline-flex items-center gap-1.5 border border-gray-300 bg-white text-gray-700 px-3 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors"
+                        >
+                          Import CSV
+                        </Link>
+                        <Link
+                          href="/capture"
+                          className="inline-flex items-center gap-1.5 bg-blue-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+                        >
+                          + Add client
+                        </Link>
+                      </div>
+                    </>
+                  )}
                 </td>
               </tr>
             )}

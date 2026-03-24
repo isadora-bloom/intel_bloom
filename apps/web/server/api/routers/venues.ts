@@ -82,6 +82,53 @@ export const venuesRouter = router({
     };
   }),
 
+  // Returns live data counts for the settings page data-setup checklist
+  getSetupStatus: venueProcedure.query(async ({ ctx }) => {
+    const { data: venue } = await ctx.supabase
+      .from("venues")
+      .select("noaa_station_id, fed_district, google_trends_metro")
+      .eq("id", ctx.venueId)
+      .single();
+
+    const stationId = venue?.noaa_station_id?.replace(/^GHCND:/i, "") ?? null;
+
+    const [weatherResult, clientsWithDateResult, clientsScoredResult, fredResult] =
+      await Promise.all([
+        stationId
+          ? ctx.supabase
+              .from("weather_monthly")
+              .select("*", { count: "exact", head: true })
+              .eq("noaa_station_id", stationId)
+          : Promise.resolve({ count: 0 as number | null }),
+        ctx.supabase
+          .from("clients")
+          .select("*", { count: "exact", head: true })
+          .eq("venue_id", ctx.venueId)
+          .not("event_date", "is", null),
+        ctx.supabase
+          .from("clients")
+          .select("*", { count: "exact", head: true })
+          .eq("venue_id", ctx.venueId)
+          .not("event_date", "is", null)
+          .not("weather_difficulty_score", "is", null),
+        ctx.supabase
+          .from("macro_economic")
+          .select("*", { count: "exact", head: true }),
+      ]);
+
+    return {
+      hasNoaaStation: !!stationId,
+      noaaStationId: stationId,
+      weatherMonthCount: weatherResult.count ?? 0,
+      clientsWithEventDate: clientsWithDateResult.count ?? 0,
+      clientsWithWeatherScore: clientsScoredResult.count ?? 0,
+      hasFedDistrict: !!venue?.fed_district,
+      fredDataPoints: fredResult.count ?? 0,
+      hasTrends: !!venue?.google_trends_metro,
+      googleTrendsMetro: venue?.google_trends_metro ?? null,
+    };
+  }),
+
   // Merges partial funnel/profile data
   saveOnboardingSection: venueProcedure
     .input(z.object({

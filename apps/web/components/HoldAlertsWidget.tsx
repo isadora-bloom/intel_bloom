@@ -3,6 +3,7 @@
 import { trpc } from "@/lib/trpc/client";
 import { format } from "date-fns";
 import { AlertTriangle } from "lucide-react";
+import Link from "next/link";
 
 export default function HoldAlertsWidget() {
   const { data: holds, isLoading, isError } = trpc.analytics.getHoldAlerts.useQuery(undefined, {
@@ -61,7 +62,9 @@ export default function HoldAlertsWidget() {
           <div key={hold.id} className="flex items-center gap-3 py-1.5">
             {/* Left: name + date */}
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-gray-900 truncate">{hold.name}</p>
+              <Link href={`/clients/${hold.id}`} className="text-sm font-semibold text-gray-900 hover:text-blue-600 truncate block transition-colors">
+                {hold.name}
+              </Link>
               {hold.eventDate && (
                 <p className="text-xs text-gray-400">
                   {format(new Date(hold.eventDate), "MMM d, yyyy")}

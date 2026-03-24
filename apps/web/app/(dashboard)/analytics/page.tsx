@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { trpc } from "@/lib/trpc/client";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -198,9 +199,22 @@ function lostReasonLabel(reason: string): string {
 
 const CURRENT_MONTH = new Date().toISOString().slice(0, 7); // "2025-03"
 
+function periodToDateFrom(period: "1m" | "3m" | "6m" | "1y" | "all"): string | undefined {
+  if (period === "all") return undefined;
+  const now = new Date();
+  if (period === "1m") now.setMonth(now.getMonth() - 1);
+  else if (period === "3m") now.setMonth(now.getMonth() - 3);
+  else if (period === "6m") now.setMonth(now.getMonth() - 6);
+  else if (period === "1y") now.setFullYear(now.getFullYear() - 1);
+  return now.toISOString().split("T")[0];
+}
+
 export default function AnalyticsPage() {
-  const { data: sourceROI }         = trpc.analytics.sourceROI.useQuery({});
-  const { data: revenue }           = trpc.analytics.revenueOverTime.useQuery({ years: 3 });
+  const [period, setPeriod] = useState<"1m" | "3m" | "6m" | "1y" | "all">("1y");
+  const dateFrom = periodToDateFrom(period);
+
+  const { data: sourceROI }         = trpc.analytics.sourceROI.useQuery({ dateFrom });
+  const { data: revenue }           = trpc.analytics.revenueOverTime.useQuery({ years: 3, dateFrom });
   const { data: timelines }         = trpc.analytics.timelineBenchmarks.useQuery();
   const { data: funnel }            = trpc.analytics.funnelSeasonality.useQuery({ years: 3 });
   const { data: pipeline }          = trpc.analytics.stagePipeline.useQuery();
@@ -210,6 +224,8 @@ export default function AnalyticsPage() {
   const { data: capacityOutlook }   = trpc.analytics.getCapacityOutlook.useQuery();
   const { data: responseTimes }     = trpc.analytics.getResponseTimes.useQuery();
   const { data: revenueProjection } = trpc.analytics.getRevenueProjection.useQuery();
+  const { data: reviewLanguage }    = trpc.analytics.getReviewLanguage.useQuery();
+  const { data: websiteTraffic }    = trpc.analytics.getWebsiteTraffic.useQuery({ months: 12 });
 
   const funnelMonths = funnel?.months ?? [];
   const hasFunnelData = funnelMonths.some(
@@ -227,6 +243,23 @@ export default function AnalyticsPage() {
   return (
     <div className="max-w-6xl space-y-8">
       <h1 className="text-2xl font-semibold text-gray-900">Analytics</h1>
+
+      {/* Period selector */}
+      <div className="flex items-center gap-2">
+        {(["1m", "3m", "6m", "1y", "all"] as const).map((p) => (
+          <button
+            key={p}
+            onClick={() => setPeriod(p)}
+            className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
+              period === p
+                ? "bg-gray-900 text-white border-gray-900"
+                : "bg-white text-gray-600 border-gray-200 hover:border-gray-400"
+            }`}
+          >
+            {p === "1m" ? "1 month" : p === "3m" ? "3 months" : p === "6m" ? "6 months" : p === "1y" ? "1 year" : "All time"}
+          </button>
+        ))}
+      </div>
 
       {/* ── FUNNEL PIPELINE (current snapshot) ── */}
       {pipeline && (
@@ -488,7 +521,10 @@ export default function AnalyticsPage() {
 
       {/* ── SOURCE ROI ── */}
       <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <h2 className="text-base font-semibold text-gray-900 mb-1">Source ROI</h2>
+        <div className="flex items-baseline justify-between mb-1">
+          <h2 className="text-base font-semibold text-gray-900">Source ROI</h2>
+          {period !== "all" && <span className="text-xs text-gray-400">Filtered: last {period === "1m" ? "month" : period === "3m" ? "3 months" : period === "6m" ? "6 months" : "year"}</span>}
+        </div>
         <p className="text-xs text-gray-400 mb-4">
           Where clients came from and how well each source converts and retains.
         </p>
@@ -763,6 +799,100 @@ export default function AnalyticsPage() {
             <p className="text-sm text-gray-400">No upcoming events yet — import clients to populate this view.</p>
           )}
         </div>
+      </div>
+
+      {/* ── REVIEW LANGUAGE ── */}
+      <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <h2 className="text-base font-semibold text-gray-900 mb-1">What couples say</h2>
+        <p className="text-xs text-gray-400 mb-4">
+          Word frequency from all review text. Larger = mentioned more often.
+          <span className="text-green-600 ml-1">Green = appears in 4-5★ reviews</span>.
+          <span className="text-red-500 ml-1">Red = appears in lower reviews</span>.
+        </p>
+        {reviewLanguage && reviewLanguage.words.length > 0 ? (
+          <div>
+            <p className="text-xs text-gray-400 mb-3">From {reviewLanguage.reviewCount} reviews</p>
+            <div className="flex flex-wrap gap-2 leading-relaxed">
+              {reviewLanguage.words.map((w) => {
+                // Font size: 12px (count=2) → 28px (count=max)
+                const maxCount = reviewLanguage.words[0]?.count ?? 1;
+                const minSize = 12;
+                const maxSize = 28;
+                const size = Math.round(minSize + ((w.count - 2) / Math.max(maxCount - 2, 1)) * (maxSize - minSize));
+
+                // Color: mostly positive → green, mostly negative → red, neutral → gray
+                const posRatio = w.count > 0 ? w.posCount / w.count : 0;
+                const negRatio = w.count > 0 ? w.negCount / w.count : 0;
+                const color = posRatio > 0.7
+                  ? "text-green-700 bg-green-50"
+                  : negRatio > 0.5
+                  ? "text-red-600 bg-red-50"
+                  : "text-gray-700 bg-gray-50";
+
+                return (
+                  <span
+                    key={w.word}
+                    title={`"${w.word}" — mentioned ${w.count} times (${w.posCount} positive, ${w.negCount} negative reviews)`}
+                    className={`inline-block px-2 py-0.5 rounded cursor-default transition-colors hover:opacity-80 ${color}`}
+                    style={{ fontSize: size }}
+                  >
+                    {w.word}
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <p className="text-sm text-gray-400">
+            No review text yet. Add review text to client profiles and it will appear here.
+          </p>
+        )}
+      </div>
+
+      {/* ── WEBSITE TRAFFIC ── */}
+      <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <h2 className="text-base font-semibold text-gray-900 mb-1">Website traffic</h2>
+        <p className="text-xs text-gray-400 mb-4">
+          Monthly sessions from your Google Analytics export.
+          Upload a GA4 CSV in <a href="/settings" className="text-blue-600 hover:underline">Settings → Website traffic</a>.
+        </p>
+        {websiteTraffic && websiteTraffic.hasData ? (
+          <div className="space-y-4">
+            {/* Source breakdown */}
+            {websiteTraffic.topSources.length > 0 && (
+              <div className="flex flex-wrap gap-2 mb-2">
+                {websiteTraffic.topSources.map((s: any) => (
+                  <span key={s.source} className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded-full">
+                    {s.source}: {s.sessions.toLocaleString()} sessions
+                  </span>
+                ))}
+              </div>
+            )}
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={websiteTraffic.monthly.map((m: any) => ({
+                ...m,
+                label: m.period.slice(5), // MM
+              }))}>
+                <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                <Tooltip
+                  formatter={(v: any, name: string) => [v.toLocaleString(), name === "sessions" ? "Sessions" : "Users"]}
+                />
+                <Legend iconSize={10} wrapperStyle={{ fontSize: 12 }} />
+                <Bar dataKey="sessions" name="sessions" fill="#3b82f6" radius={[3,3,0,0]} />
+                <Bar dataKey="users"    name="users"    fill="#93c5fd" radius={[3,3,0,0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        ) : (
+          <div className="text-sm text-gray-400 space-y-1">
+            <p>No traffic data yet.</p>
+            <p className="text-xs">
+              Export from GA4: Reports → Acquisition → Traffic acquisition → set date range → Export CSV.
+              Then upload in <a href="/settings" className="text-blue-600 hover:underline">Settings → Website traffic</a>.
+            </p>
+          </div>
+        )}
       </div>
 
       {/* ── INQUIRY RESPONSE TIMES ── */}

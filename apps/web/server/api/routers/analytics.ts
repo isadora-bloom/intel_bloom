@@ -5,7 +5,11 @@ import { TRPCError } from "@trpc/server";
 export const analyticsRouter = router({
   // Source ROI breakdown
   sourceROI: venueProcedure
-    .input(z.object({ yearFrom: z.number().int().optional(), yearTo: z.number().int().optional() }))
+    .input(z.object({
+      yearFrom: z.number().int().optional(),
+      yearTo: z.number().int().optional(),
+      dateFrom: z.string().optional(),  // ISO date — filters by inquired_at when set
+    }))
     .query(async ({ ctx, input }) => {
       // Fetch clients + venue profile (for estimated revenue fallback) in parallel
       let query = ctx.supabase
@@ -14,8 +18,12 @@ export const analyticsRouter = router({
         .eq("venue_id", ctx.venueId)
         .not("resolved_source", "is", null);
 
-      if (input.yearFrom) query = query.gte("event_year", input.yearFrom);
-      if (input.yearTo) query = query.lte("event_year", input.yearTo);
+      if (input.dateFrom) {
+        query = query.gte("inquired_at", input.dateFrom);
+      } else {
+        if (input.yearFrom) query = query.gte("event_year", input.yearFrom);
+        if (input.yearTo) query = query.lte("event_year", input.yearTo);
+      }
 
       const [{ data, error }, { data: venueData }] = await Promise.all([
         query,
@@ -195,7 +203,7 @@ export const analyticsRouter = router({
               return ctx.supabase
                 .from("weather_monthly")
                 .select("month, year, temp_max_f, precipitation_inches")
-                .eq("noaa_station_id", v.noaa_station_id)
+                .eq("noaa_station_id", v.noaa_station_id.replace(/^GHCND:/i, ""))
                 .order("year", { ascending: false })
                 .order("month", { ascending: true });
             }),
@@ -593,17 +601,26 @@ export const analyticsRouter = router({
 
   // Revenue by year/month
   revenueOverTime: venueProcedure
-    .input(z.object({ years: z.number().int().default(3) }))
+    .input(z.object({
+      years: z.number().int().default(3),
+      dateFrom: z.string().optional(),  // ISO date — filters by event_date when set
+    }))
     .query(async ({ ctx, input }) => {
-      const fromYear = new Date().getFullYear() - input.years + 1;
+      const fromYear = input.dateFrom
+        ? new Date(input.dateFrom).getFullYear()
+        : new Date().getFullYear() - input.years + 1;
 
-      const { data, error } = await ctx.supabase
+      let query = ctx.supabase
         .from("clients")
         .select("event_year, event_month, revenue_cents")
         .eq("venue_id", ctx.venueId)
         .gte("event_year", fromYear)
         .not("revenue_cents", "is", null)
         .not("event_year", "is", null);
+
+      if (input.dateFrom) query = query.gte("event_date", input.dateFrom);
+
+      const { data, error } = await query;
 
       if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
 
@@ -852,4 +869,110 @@ export const analyticsRouter = router({
 
     return { months, totalContractedRevenue, totalProjectedRevenue };
   }),
+
+  // Review language analysis — word frequency from review text
+  getReviewLanguage: venueProcedure.query(async ({ ctx }) => {
+    const { data } = await ctx.supabase
+      .from("clients")
+      .select("review_text, review_star_rating")
+      .eq("venue_id", ctx.venueId)
+      .not("review_text", "is", null);
+
+    const STOP = new Set([
+      "the","a","an","and","or","but","in","on","at","to","for","of","with","by","from",
+      "is","was","are","were","be","been","has","have","had","do","does","did","will",
+      "would","could","should","may","might","this","that","these","those","it","its",
+      "we","our","they","their","you","your","i","my","me","us","he","his","she","her",
+      "very","so","just","not","no","as","up","if","out","about","than","then","also",
+      "more","all","can","what","which","who","how","when","where","why","there","here",
+      "get","got","go","went","come","came","see","say","said","know","think","made",
+      "take","took","feel","felt","look","want","every","like","time","day","year",
+      "help","great","good","much","many","some","such","into","over","after","before",
+      "been","even","most","other","well","back","first","only","through","during","each",
+    ]);
+
+    const wordMap = new Map<string, { count: number; posCount: number; negCount: number }>();
+
+    for (const client of data ?? []) {
+      if (!client.review_text) continue;
+      const rating = client.review_star_rating as number | null;
+      const isPos = rating !== null && rating >= 4;
+      const isNeg = rating !== null && rating <= 3;
+
+      const words = (client.review_text as string)
+        .toLowerCase()
+        .replace(/[^a-z\s'-]/g, " ")
+        .split(/\s+/)
+        .filter((w) => w.length > 3 && !STOP.has(w) && !/^\d+$/.test(w));
+
+      for (const word of words) {
+        const clean = word.replace(/^'+|'+$/g, ""); // trim leading/trailing apostrophes
+        if (clean.length < 4) continue;
+        if (!wordMap.has(clean)) wordMap.set(clean, { count: 0, posCount: 0, negCount: 0 });
+        const entry = wordMap.get(clean)!;
+        entry.count++;
+        if (isPos) entry.posCount++;
+        if (isNeg) entry.negCount++;
+      }
+    }
+
+    const reviewCount = (data ?? []).length;
+    const words = Array.from(wordMap.entries())
+      .filter(([, v]) => v.count >= 2)
+      .map(([word, stats]) => ({ word, ...stats }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 80);
+
+    return { reviewCount, words };
+  }),
+
+  // Website traffic — aggregate sessions/users by month for the venue
+  getWebsiteTraffic: venueProcedure
+    .input(z.object({ months: z.number().int().default(12) }))
+    .query(async ({ ctx, input }) => {
+      const fromDate = new Date();
+      fromDate.setMonth(fromDate.getMonth() - input.months);
+      const fromIso = fromDate.toISOString().split("T")[0];
+
+      const { data, error } = await ctx.supabase
+        .from("website_traffic")
+        .select("date, sessions, users, new_users, pageviews, source, medium")
+        .eq("venue_id", ctx.venueId)
+        .gte("date", fromIso)
+        .order("date");
+
+      if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
+
+      // Aggregate by month (sum across all sources)
+      const monthMap = new Map<string, { sessions: number; users: number; newUsers: number; pageviews: number }>();
+      for (const row of data ?? []) {
+        const key = (row.date as string).slice(0, 7); // YYYY-MM
+        const existing = monthMap.get(key) ?? { sessions: 0, users: 0, newUsers: 0, pageviews: 0 };
+        existing.sessions  += (row.sessions  ?? 0) as number;
+        existing.users     += (row.users     ?? 0) as number;
+        existing.newUsers  += (row.new_users ?? 0) as number;
+        existing.pageviews += (row.pageviews ?? 0) as number;
+        monthMap.set(key, existing);
+      }
+
+      // Source breakdown (top 6)
+      const sourceMap = new Map<string, number>();
+      for (const row of data ?? []) {
+        const src = (row.source as string) ?? "unknown";
+        sourceMap.set(src, (sourceMap.get(src) ?? 0) + ((row.sessions as number) ?? 0));
+      }
+      const topSources = Array.from(sourceMap.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 6)
+        .map(([source, sessions]) => ({ source, sessions }));
+
+      const monthly = Array.from(monthMap.entries())
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([period, stats]) => ({ period, ...stats }));
+
+      const totalSessions = monthly.reduce((s, m) => s + m.sessions, 0);
+      const totalRows = (data ?? []).length;
+
+      return { monthly, topSources, totalSessions, hasData: totalRows > 0 };
+    }),
 });
