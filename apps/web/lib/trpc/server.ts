@@ -1,6 +1,6 @@
 import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createServiceClient } from "@/lib/supabase/server";
 
 export async function createTRPCContext() {
   const supabase = await createClient();
@@ -8,13 +8,16 @@ export async function createTRPCContext() {
     data: { user },
   } = await supabase.auth.getUser();
 
-  // Get venue_id for this user
+  // Use service role for venue_id lookup — the anon client is subject to RLS
+  // on venue_users which can return null until session propagation settles.
   let venueId: string | null = null;
   if (user) {
-    const { data } = await supabase
+    const serviceSupabase = createServiceClient();
+    const { data } = await serviceSupabase
       .from("venue_users")
       .select("venue_id")
       .eq("user_id", user.id)
+      .limit(1)
       .single();
     venueId = data?.venue_id ?? null;
   }
