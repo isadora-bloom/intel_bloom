@@ -64,15 +64,15 @@ export default function OnboardPage() {
     if (!venueName.trim() || !city.trim()) return;
     setSaving(true); setError(null);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("Not authenticated");
       const slug = venueName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-      const { data: venue, error: ve } = await supabase
-        .from("venues")
-        .insert({ name: venueName, slug: `${slug}-${Date.now()}`, address_line1: addressLine1, city, state, zip, onboarding_step: 1 })
-        .select().single();
-      if (ve) throw ve;
-      await supabase.from("venue_users").insert({ venue_id: venue.id, user_id: user.id, role: "owner" });
+      const res = await fetch("/api/venues/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: venueName, slug: `${slug}-${Date.now()}`, addressLine1, city, state, zip }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Something went wrong");
+      const venue = json.venue;
       fetch("/api/onboard", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ venueId: venue.id }) });
       setVenueId(venue.id);
       setStep(1);
