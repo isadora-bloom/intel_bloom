@@ -70,10 +70,12 @@ export default function SettingsPage() {
   const disconnect = trpc.email.disconnect.useMutation({ onSuccess: () => refetchEmail() });
   const scan = trpc.email.scan.useMutation();
   const syncTours = trpc.calendly.syncTours.useMutation();
+  const backfill = trpc.clients.backfillSourceAttribution.useMutation();
 
   const searchParams = useSearchParams();
   const [saved, setSaved] = useState(false);
   const [scanResult, setScanResult] = useState<any>(null);
+  const [backfillResult, setBackfillResult] = useState<{ updated: number; total: number } | null>(null);
   const [syncToursResult, setSyncToursResult] = useState<{ synced: number; alreadyExisted: number; errors: string[] } | null>(null);
   const [emailDaysBack, setEmailDaysBack] = useState(730);
   const [weatherIngesting, setWeatherIngesting] = useState(false);
@@ -233,6 +235,14 @@ export default function SettingsPage() {
     const result = await scan.mutateAsync({ maxEmails: 500, daysBack: emailDaysBack });
     setScanResult(result);
     refetchEmail();
+    // After scanning, back-fill attribution for any clients whose email was found
+    const bf = await backfill.mutateAsync();
+    setBackfillResult(bf);
+  }
+
+  async function handleBackfill() {
+    const bf = await backfill.mutateAsync();
+    setBackfillResult(bf);
   }
 
   async function handleSyncTours() {
@@ -649,13 +659,27 @@ export default function SettingsPage() {
               </select>
               <button
                 onClick={handleScan}
-                disabled={scan.isPending}
+                disabled={scan.isPending || backfill.isPending}
                 className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50"
               >
                 {scan.isPending ? (
                   <><Loader2 size={14} className="animate-spin" /> Scanning inbox…</>
+                ) : backfill.isPending ? (
+                  <><Loader2 size={14} className="animate-spin" /> Attributing…</>
                 ) : (
                   <><Mail size={14} /> Scan inbox</>
+                )}
+              </button>
+              <button
+                onClick={handleBackfill}
+                disabled={backfill.isPending || scan.isPending}
+                className="flex items-center gap-2 border border-gray-300 bg-white text-gray-700 px-3 py-2 rounded text-sm font-medium hover:bg-gray-50 transition-colors disabled:opacity-50"
+                title="Match already-scanned emails to imported clients and fill in their source"
+              >
+                {backfill.isPending ? (
+                  <><Loader2 size={14} className="animate-spin" /> Attributing…</>
+                ) : (
+                  "Attribute from emails"
                 )}
               </button>
             </div>
@@ -730,6 +754,14 @@ export default function SettingsPage() {
                 {scanResult.newWeddingEmails === 0 && (
                   <p className="text-sm text-gray-500">
                     No new wedding inquiry emails found in the last year.
+                  </p>
+                )}
+
+                {backfillResult && (
+                  <p className="text-sm text-gray-600">
+                    Source attribution back-filled on{" "}
+                    <span className="font-medium text-green-700">{backfillResult.updated}</span> of{" "}
+                    {backfillResult.total} previously unattributed clients.
                   </p>
                 )}
               </div>

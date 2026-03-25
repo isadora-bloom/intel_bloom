@@ -311,6 +311,77 @@ export const clientsRouter = router({
       return data;
     }),
 
+  // Back-fill resolved_source on clients that have no attribution yet,
+  // by matching their email address against email_extractions already in the DB.
+  // Run this after a CSV import or manually from Settings.
+  backfillSourceAttribution: venueProcedure
+    .mutation(async ({ ctx }) => {
+      const { data: clients } = await ctx.supabase
+        .from("clients")
+        .select("id, email_primary, email_partner, self_reported_source")
+        .eq("venue_id", ctx.venueId)
+        .is("resolved_source", null)
+        .not("email_primary", "is", null);
+
+      if (!clients || clients.length === 0) return { updated: 0, total: 0 };
+
+      // Map Claude extraction labels → canonical resolved_source values
+      const sourceMap: Record<string, string> = {
+        the_knot: "knot",
+        wedding_wire: "wedding_wire",
+        zola: "zola",
+        instagram: "instagram",
+        facebook: "facebook",
+        google: "google_organic",
+        friend_referral: "referral",
+        direct: "direct",
+        other: "other",
+      };
+
+      let updated = 0;
+
+      for (const client of clients) {
+        const emails = [client.email_primary, client.email_partner].filter(Boolean) as string[];
+        if (emails.length === 0) continue;
+
+        const emailFilter = emails.map((e) => `from_email.ilike.${e}`).join(",");
+
+        const { data: extractions } = await ctx.supabase
+          .from("email_extractions")
+          .select("id, extracted_source, match_score")
+          .eq("venue_id", ctx.venueId)
+          .or(emailFilter)
+          .not("extracted_source", "is", null)
+          .order("match_score", { ascending: false })
+          .limit(5);
+
+        if (!extractions || extractions.length === 0) continue;
+
+        const best = extractions[0];
+        const resolvedSource = sourceMap[best.extracted_source] ?? best.extracted_source;
+
+        await ctx.supabase
+          .from("clients")
+          .update({
+            self_reported_source: client.self_reported_source ?? best.extracted_source,
+            resolved_source: resolvedSource,
+            resolved_source_confidence: 72,
+          })
+          .eq("id", client.id);
+
+        // Link extraction back to this client if not already linked
+        await ctx.supabase
+          .from("email_extractions")
+          .update({ matched_client_id: client.id })
+          .eq("id", best.id)
+          .is("matched_client_id", null);
+
+        updated++;
+      }
+
+      return { updated, total: clients.length };
+    }),
+
   // Update social reach — tracks social following / post reach for a past couple.
   // Useful for identifying "ambassador" clients whose wedding posts drove significant
   // organic awareness. Set manually by the coordinator after checking.
