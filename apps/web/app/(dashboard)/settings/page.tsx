@@ -69,10 +69,13 @@ export default function SettingsPage() {
   const update = trpc.venues.update.useMutation({ onSuccess: () => refetch() });
   const disconnect = trpc.email.disconnect.useMutation({ onSuccess: () => refetchEmail() });
   const scan = trpc.email.scan.useMutation();
+  const syncTours = trpc.calendly.syncTours.useMutation();
 
   const searchParams = useSearchParams();
   const [saved, setSaved] = useState(false);
   const [scanResult, setScanResult] = useState<any>(null);
+  const [syncToursResult, setSyncToursResult] = useState<{ synced: number; alreadyExisted: number; errors: number } | null>(null);
+  const [emailDaysBack, setEmailDaysBack] = useState(730);
   const [weatherIngesting, setWeatherIngesting] = useState(false);
   const [weatherResult, setWeatherResult] = useState<{ monthsIngested: number; errors: number } | null>(null);
   const [calibrating, setCalibrating] = useState(false);
@@ -227,9 +230,14 @@ export default function SettingsPage() {
   }
 
   async function handleScan() {
-    const result = await scan.mutateAsync({ maxEmails: 200, daysBack: 730 });
+    const result = await scan.mutateAsync({ maxEmails: 500, daysBack: emailDaysBack });
     setScanResult(result);
     refetchEmail();
+  }
+
+  async function handleSyncTours() {
+    const result = await syncTours.mutateAsync();
+    setSyncToursResult(result);
   }
 
   async function handleTrafficUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -626,17 +634,31 @@ export default function SettingsPage() {
               </p>
             )}
 
-            <button
-              onClick={handleScan}
-              disabled={scan.isPending}
-              className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50"
-            >
-              {scan.isPending ? (
-                <><Loader2 size={14} className="animate-spin" /> Scanning inbox…</>
-              ) : (
-                <><Mail size={14} /> Scan inbox</>
-              )}
-            </button>
+            <div className="flex items-center gap-2">
+              <select
+                value={emailDaysBack}
+                onChange={(e) => setEmailDaysBack(Number(e.target.value))}
+                disabled={scan.isPending}
+                className="border border-gray-300 rounded px-2 py-2 text-sm text-gray-700 bg-white"
+              >
+                <option value={90}>Last 3 months</option>
+                <option value={365}>Last 1 year</option>
+                <option value={730}>Last 2 years</option>
+                <option value={1095}>Last 3 years</option>
+                <option value={1825}>Last 5 years</option>
+              </select>
+              <button
+                onClick={handleScan}
+                disabled={scan.isPending}
+                className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50"
+              >
+                {scan.isPending ? (
+                  <><Loader2 size={14} className="animate-spin" /> Scanning inbox…</>
+                ) : (
+                  <><Mail size={14} /> Scan inbox</>
+                )}
+              </button>
+            </div>
 
             {/* Scan results */}
             {scanResult && (
@@ -756,14 +778,32 @@ export default function SettingsPage() {
             </p>
           </div>
           {checklistStatus?.calendlyConnected ? (
-            <span className="flex items-center gap-1.5 text-xs text-green-700 font-medium flex-shrink-0">
-              <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
-              Connected
-            </span>
+            <div className="flex items-center gap-3 flex-shrink-0">
+              <span className="flex items-center gap-1.5 text-xs text-green-700 font-medium">
+                <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                Connected
+              </span>
+              <button
+                onClick={handleSyncTours}
+                disabled={syncTours.isPending}
+                className="flex items-center gap-1.5 text-sm bg-blue-600 text-white px-3 py-1.5 rounded font-medium hover:bg-blue-700 transition-colors disabled:opacity-50"
+              >
+                {syncTours.isPending ? (
+                  <><Loader2 size={13} className="animate-spin" /> Syncing…</>
+                ) : (
+                  "Sync appointments"
+                )}
+              </button>
+            </div>
           ) : (
             <a href="/dashboard" className="flex-shrink-0 text-sm text-blue-600 hover:text-blue-800 font-medium whitespace-nowrap">
               Connect in setup →
             </a>
+          )}
+          {syncToursResult && (
+            <p className="text-xs text-gray-500 mt-1">
+              Synced: <span className="font-medium text-green-700">{syncToursResult.synced} new</span>, {syncToursResult.alreadyExisted} already imported{syncToursResult.errors > 0 ? `, ${syncToursResult.errors} errors` : ""}
+            </p>
           )}
         </div>
 
