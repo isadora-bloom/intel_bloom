@@ -74,7 +74,7 @@ export default function SettingsPage() {
   const searchParams = useSearchParams();
   const [saved, setSaved] = useState(false);
   const [scanResult, setScanResult] = useState<any>(null);
-  const [syncToursResult, setSyncToursResult] = useState<{ synced: number; alreadyExisted: number; errors: number } | null>(null);
+  const [syncToursResult, setSyncToursResult] = useState<{ synced: number; alreadyExisted: number; errors: string[] } | null>(null);
   const [emailDaysBack, setEmailDaysBack] = useState(730);
   const [weatherIngesting, setWeatherIngesting] = useState(false);
   const [weatherResult, setWeatherResult] = useState<{ monthsIngested: number; errors: number } | null>(null);
@@ -802,7 +802,7 @@ export default function SettingsPage() {
           )}
           {syncToursResult && (
             <p className="text-xs text-gray-500 mt-1">
-              Synced: <span className="font-medium text-green-700">{syncToursResult.synced} new</span>, {syncToursResult.alreadyExisted} already imported{syncToursResult.errors > 0 ? `, ${syncToursResult.errors} errors` : ""}
+              Synced: <span className="font-medium text-green-700">{syncToursResult.synced} new</span>, {syncToursResult.alreadyExisted} already imported{syncToursResult.errors.length > 0 ? `, ${syncToursResult.errors.length} errors` : ""}
             </p>
           )}
         </div>
