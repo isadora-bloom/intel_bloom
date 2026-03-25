@@ -36,7 +36,7 @@ function SyncPanel() {
   const syncGoogle = trpc.reviews.syncGoogle.useMutation({ onSuccess: () => utils.reviews.list.invalidate() });
   const syncKnot = trpc.reviews.syncKnot.useMutation({ onSuccess: () => utils.reviews.list.invalidate() });
   const analyze = trpc.reviews.analyzeLanguage.useMutation({ onSuccess: () => utils.reviews.list.invalidate() });
-  const [knotUrl, setKnotUrl] = useState("");
+  const [knotText, setKnotText] = useState("");
   const [googleResult, setGoogleResult] = useState<{ synced: number; matched: number } | null>(null);
   const [knotResult, setKnotResult] = useState<{ synced: number; matched: number } | null>(null);
 
@@ -68,29 +68,29 @@ function SyncPanel() {
       <div className="space-y-2">
         <div>
           <p className="text-sm font-medium text-gray-900">The Knot</p>
-          <p className="text-xs text-gray-400">Paste your Knot profile URL — Claude will extract all visible reviews</p>
+          <p className="text-xs text-gray-400">
+            The Knot blocks automated access. Instead: open your Knot profile → scroll through all reviews → select all text on the page (Ctrl+A) → copy → paste below.
+          </p>
           {knotResult && (
             <p className="text-xs text-green-700 mt-0.5">
               Synced {knotResult.synced} · {knotResult.matched} matched to clients
             </p>
           )}
         </div>
-        <div className="flex gap-2">
-          <input
-            type="url"
-            value={knotUrl}
-            onChange={(e) => setKnotUrl(e.target.value)}
-            placeholder="https://www.theknot.com/marketplace/your-venue"
-            className="flex-1 border border-gray-300 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-          <button
-            onClick={() => syncKnot.mutateAsync({ profileUrl: knotUrl }).then(setKnotResult)}
-            disabled={syncKnot.isPending || !knotUrl}
-            className="flex items-center gap-1.5 bg-pink-600 text-white text-sm px-3 py-1.5 rounded font-medium hover:bg-pink-700 disabled:opacity-50"
-          >
-            {syncKnot.isPending ? <><Loader2 size={13} className="animate-spin" /> Extracting…</> : <><RefreshCw size={13} /> Sync Knot</>}
-          </button>
-        </div>
+        <textarea
+          value={knotText}
+          onChange={(e) => setKnotText(e.target.value)}
+          placeholder="Paste the full page text from your Knot profile here…"
+          rows={4}
+          className="w-full border border-gray-300 rounded px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-400"
+        />
+        <button
+          onClick={() => syncKnot.mutateAsync({ pastedText: knotText }).then(setKnotResult)}
+          disabled={syncKnot.isPending || knotText.length < 50}
+          className="flex items-center gap-1.5 bg-pink-600 text-white text-sm px-3 py-1.5 rounded font-medium hover:bg-pink-700 disabled:opacity-50"
+        >
+          {syncKnot.isPending ? <><Loader2 size={13} className="animate-spin" /> Extracting…</> : <><RefreshCw size={13} /> Extract reviews</>}
+        </button>
       </div>
 
       {/* Analyze language */}

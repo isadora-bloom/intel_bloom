@@ -23,49 +23,33 @@ async function fetchGoogleReviews(placeId: string): Promise<any[]> {
   return data.result?.reviews ?? [];
 }
 
-// ── THE KNOT SCRAPE + CLAUDE EXTRACT ─────────────────────────────────────────
+// ── THE KNOT PASTE + CLAUDE EXTRACT ──────────────────────────────────────────
 
-async function scrapeKnotReviews(profileUrl: string): Promise<Array<{
+async function extractKnotReviewsFromText(pastedText: string): Promise<Array<{
   reviewer: string;
   rating: number;
   text: string;
   date: string | null;
   weddingDate: string | null;
 }>> {
-  // Fetch the public Knot profile page
-  const res = await fetch(profileUrl, {
-    headers: { "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)" },
-  });
-  if (!res.ok) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: `Could not fetch The Knot page (${res.status})` });
-
-  const html = await res.text();
-  // Strip scripts/styles, keep readable text
-  const text = html
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 60000); // cap for token limits
-
   const response = await anthropic.messages.create({
     model: "claude-haiku-4-5-20251001",
     max_tokens: 4000,
     messages: [{
       role: "user",
-      content: `Extract ALL reviews from this scraped wedding venue page text.
+      content: `Extract ALL wedding venue reviews from this pasted text (copied from The Knot or similar).
 
 For each review extract:
 - reviewer: reviewer's name (first name or full name as shown)
-- rating: star rating as a number 1-5
+- rating: star rating as a number 1-5 (look for stars, "X out of 5", "5.0", etc.)
 - text: the full review text verbatim
 - date: date review was posted (ISO YYYY-MM-DD if you can determine it, otherwise null)
 - weddingDate: wedding date mentioned in the review text (ISO YYYY-MM-DD if parseable, otherwise null)
 
 Return a JSON array. If no reviews found, return [].
 
-Page text:
-${text}
+Pasted text:
+${pastedText.slice(0, 60000)}
 
 Return ONLY the JSON array, no other text.`,
     }],
@@ -240,11 +224,11 @@ export const reviewsRouter = router({
       return { synced, matched, total: googleReviews.length };
     }),
 
-  // Sync reviews from The Knot (scrape + Claude extract)
+  // Import reviews from The Knot via pasted page text
   syncKnot: venueProcedure
-    .input(z.object({ profileUrl: z.string().url() }))
+    .input(z.object({ pastedText: z.string().min(50) }))
     .mutation(async ({ ctx, input }) => {
-      const reviews = await scrapeKnotReviews(input.profileUrl);
+      const reviews = await extractKnotReviewsFromText(input.pastedText);
 
       let synced = 0;
       let matched = 0;
@@ -266,7 +250,7 @@ export const reviewsRouter = router({
             venue_id: ctx.venueId,
             platform: "the_knot",
             platform_review_id: `knot-${r.reviewer ?? i}-${r.date ?? i}`,
-            platform_url: input.profileUrl,
+            platform_url: null,
             reviewer_name: r.reviewer ?? null,
             rating: r.rating ?? null,
             review_text: r.text,

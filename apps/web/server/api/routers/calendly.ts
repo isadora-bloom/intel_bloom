@@ -78,12 +78,21 @@ export const calendlyRouter = router({
       } catch { /* not JSON */ }
     }
 
-    // Paginate ALL events — both active and canceled, no date restriction
+    // Paginate ALL events — both active and canceled, full history back to 2018
+    const minStartTime = new Date("2018-01-01T00:00:00Z").toISOString();
+    const maxStartTime = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(); // +1 year future
+
     const allEvents: any[] = [];
     for (const status of ["active", "canceled"]) {
       let nextPageToken: string | null = null;
       do {
-        const params = new URLSearchParams({ user: userUri, status, count: "100" });
+        const params = new URLSearchParams({
+          user: userUri,
+          status,
+          count: "100",
+          min_start_time: minStartTime,
+          max_start_time: maxStartTime,
+        });
         if (nextPageToken) params.set("page_token", nextPageToken);
         const eventsData = await calendlyFetch(`/scheduled_events?${params.toString()}`, apiKey);
         allEvents.push(...(eventsData.collection ?? []));
