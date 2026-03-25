@@ -1318,4 +1318,83 @@ ${JSON.stringify(context, null, 2)}`;
 
       return { events, summary, searchName };
     }),
+
+  // AI-powered CSV column mapper — figures out any spreadsheet a venue might have.
+  // Sends headers + sample rows to Claude and gets back a field mapping + notes.
+  mapCsvColumns: venueProcedure
+    .input(z.object({
+      headers: z.array(z.string()),
+      sampleRows: z.array(z.array(z.string())).max(8),
+    }))
+    .mutation(async ({ input }) => {
+      const client = new Anthropic();
+
+      const headerLine = input.headers.join(" | ");
+      const sampleLines = input.sampleRows
+        .map((r) => r.map((v) => v.slice(0, 80)).join(" | "))
+        .join("\n");
+
+      const prompt = `You are helping import a wedding venue's client spreadsheet into a CRM.
+
+The spreadsheet has these columns:
+${headerLine}
+
+Sample rows (first ${input.sampleRows.length}):
+${sampleLines}
+
+Map the spreadsheet columns to these CRM fields. For each field, return the EXACT column header string that best matches, or null if nothing fits.
+
+CRM fields:
+- name: primary contact's full name or first name
+- partner: partner/spouse name
+- email: primary email (if multiple email columns exist, pick the real personal one over platform relay addresses like @member.theknot.com, @reply.weddingwire.com, @vmkt-message.zola.com)
+- phone: phone number
+- event_date: wedding or event date
+- inquiry_date: date of first contact / when they first reached out
+- guest_count: number of guests (may be a range like "50-100")
+- status: booking status (may need derivation — e.g. a "Tour Booked" yes/no column)
+- source: how they heard about the venue
+- revenue: contract value, invoice total, price paid
+- package: package name or service tier
+
+Also return:
+- notes: 1-2 sentences about anything unusual in this spreadsheet (e.g. "Dates are stored as Excel serial numbers", "Guest count is a range — we'll use the midpoint", "Status is derived from the Tour Booked column")
+- status_derivation: if status must be derived from a non-status column, explain how (e.g. "Use Tour Booked column: Yes=tour_booked, No=archived, blank=inquiry")
+
+Respond with ONLY valid JSON, no markdown:
+{
+  "mapping": {
+    "name": "...",
+    "partner": "...",
+    "email": "...",
+    "phone": null,
+    "event_date": "...",
+    "inquiry_date": "...",
+    "guest_count": "...",
+    "status": "...",
+    "source": "...",
+    "revenue": null,
+    "package": null
+  },
+  "notes": "...",
+  "status_derivation": "..."
+}`;
+
+      const msg = await client.messages.create({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 800,
+        messages: [{ role: "user", content: prompt }],
+      });
+
+      const text = (msg.content[0] as { type: string; text: string }).text.trim();
+      // Strip markdown code fences if present
+      const json = text.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
+      const parsed = JSON.parse(json);
+
+      return {
+        mapping: parsed.mapping as Record<string, string | null>,
+        notes: (parsed.notes as string) ?? "",
+        statusDerivation: (parsed.status_derivation as string) ?? "",
+      };
+    }),
 });

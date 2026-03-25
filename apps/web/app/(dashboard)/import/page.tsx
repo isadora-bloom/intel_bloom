@@ -2,7 +2,7 @@
 
 import { trpc } from "@/lib/trpc/client";
 import { useState, useCallback, useRef } from "react";
-import { UploadCloud, FileText, CheckCircle2, AlertCircle, ChevronDown, ArrowRight, ExternalLink } from "lucide-react";
+import { UploadCloud, FileText, CheckCircle2, AlertCircle, ChevronDown, ArrowRight, ExternalLink, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { parse } from "csv-parse/browser/esm/sync";
 
@@ -91,19 +91,43 @@ function parseCurrencyToCents(val: string): number | undefined {
 
 function parseEventDate(val: string): string | undefined {
   if (!val) return undefined;
-  const d = new Date(val);
-  if (isNaN(d.getTime())) return undefined;
-  return d.toISOString().split("T")[0];
+  const trimmed = val.trim();
+
+  // Excel serial number (e.g. 45923, 46291) — 5-digit numbers in range 40000–60000
+  const serial = Number(trimmed);
+  if (!isNaN(serial) && serial > 40000 && serial < 70000) {
+    const d = new Date((serial - 25569) * 86400 * 1000);
+    if (!isNaN(d.getTime())) return d.toISOString().split("T")[0];
+  }
+
+  // "August 21st", "October 3rd", etc. — convert to parseable
+  const monthWord = trimmed.replace(/(\d+)(st|nd|rd|th)/i, "$1");
+  const d = new Date(monthWord);
+  if (!isNaN(d.getTime()) && d.getFullYear() > 2000) return d.toISOString().split("T")[0];
+
+  return undefined;
 }
 
 function parseGuestCount(val: string): number | undefined {
   if (!val) return undefined;
-  const n = parseInt(val.replace(/[^0-9]/g, ""), 10);
-  return isNaN(n) ? undefined : n;
+  // Range like "51-100", "51 - 100", "176–200" (en/em dash) → take midpoint
+  const rangeMatch = val.match(/(\d+)\s*[-–—]\s*(\d+)/);
+  if (rangeMatch) {
+    const lo = parseInt(rangeMatch[1], 10);
+    const hi = parseInt(rangeMatch[2], 10);
+    return Math.round((lo + hi) / 2);
+  }
+  // "about 80", "~75"
+  const approx = val.match(/\d+/);
+  return approx ? parseInt(approx[0], 10) : undefined;
 }
 
 function mapHbStatus(raw: string): "inquiry" | "tour_booked" | "booked" | "planning" | "event_complete" | "archived" {
   const s = raw.toLowerCase().trim();
+  // Boolean tour-booked columns (Yes/No/TRUE/FALSE)
+  if (s === "yes" || s === "true") return "tour_booked";
+  if (s === "no" || s === "false") return "archived";
+  // Named statuses
   if (s.includes("lead") || s.includes("inquiry") || s.includes("new")) return "inquiry";
   if (s.includes("tour")) return "tour_booked";
   if (s.includes("active") || s.includes("book") || s.includes("contract")) return "booked";
@@ -189,6 +213,8 @@ export default function ImportPage() {
   });
 
   const upsertMutation = trpc.clients.upsertFromImport.useMutation();
+  const aiMapMutation = trpc.insights.mapCsvColumns.useMutation();
+  const [aiNotes, setAiNotes] = useState<string | null>(null);
   const utils = trpc.useUtils();
 
   function handleFile(file: File) {
@@ -215,6 +241,27 @@ export default function ImportPage() {
       }
     };
     reader.readAsText(file);
+  }
+
+  async function handleAiMap() {
+    if (!headers.length || !rows.length) return;
+    setAiNotes(null);
+    const sampleRows = rows.slice(0, 6).map((r) => headers.map((h) => r[h] ?? ""));
+    const result = await aiMapMutation.mutateAsync({ headers, sampleRows });
+    // Apply mapping — only override fields that are currently __none__ or where AI found something
+    const m = result.mapping;
+    setMapping((prev) => {
+      const next = { ...prev };
+      for (const [field, col] of Object.entries(m)) {
+        if (col && headers.includes(col)) {
+          next[field as keyof ColumnMapping] = col;
+        }
+      }
+      return next;
+    });
+    const notes = [result.notes, result.statusDerivation].filter(Boolean).join(" • ");
+    if (notes) setAiNotes(notes);
+    setShowSecondary(true);
   }
 
   const onDrop = useCallback((e: React.DragEvent) => {
@@ -455,10 +502,31 @@ export default function ImportPage() {
       {/* Section 2 — Column mapping */}
       {rows.length > 0 && (
         <div className="bg-white border border-gray-200 rounded-xl p-6">
-          <h2 className="text-sm font-semibold text-gray-900 mb-1">2. Map your columns</h2>
-          <p className="text-xs text-gray-500 mb-5">
-            Auto-detected from your column names. Adjust if needed.
-          </p>
+          <div className="flex items-start justify-between gap-4 mb-4">
+            <div>
+              <h2 className="text-sm font-semibold text-gray-900 mb-1">2. Map your columns</h2>
+              <p className="text-xs text-gray-500">
+                Auto-detected from your column names. Adjust if needed — or let AI figure it out.
+              </p>
+            </div>
+            <button
+              onClick={handleAiMap}
+              disabled={aiMapMutation.isPending}
+              className="flex-shrink-0 flex items-center gap-1.5 text-sm bg-violet-600 text-white px-3 py-1.5 rounded font-medium hover:bg-violet-700 transition-colors disabled:opacity-50"
+            >
+              {aiMapMutation.isPending ? (
+                <><Loader2 size={13} className="animate-spin" /> Mapping…</>
+              ) : (
+                "✦ AI Map"
+              )}
+            </button>
+          </div>
+
+          {aiNotes && (
+            <div className="text-xs text-violet-800 bg-violet-50 border border-violet-200 rounded-lg px-3 py-2 mb-4">
+              {aiNotes}
+            </div>
+          )}
 
           {/* Primary fields */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
