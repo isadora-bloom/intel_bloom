@@ -14,6 +14,7 @@ import { emailRouter } from "./routers/email";
 import { calendlyRouter } from "./routers/calendly";
 import { touchpointsRouter } from "./routers/touchpoints";
 import { socialRouter } from "./routers/social";
+import { reviewsRouter } from "./routers/reviews";
 
 export const appRouter = router({
   venues: venuesRouter,
@@ -31,6 +32,7 @@ export const appRouter = router({
   calendly: calendlyRouter,
   touchpoints: touchpointsRouter,
   social: socialRouter,
+  reviews: reviewsRouter,
 });
 
 export type AppRouter = typeof appRouter;

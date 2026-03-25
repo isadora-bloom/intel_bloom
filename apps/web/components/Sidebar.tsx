@@ -16,6 +16,7 @@ import {
   DownloadCloud,
   Menu,
   X,
+  Star,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
@@ -29,6 +30,7 @@ const NAV_ITEMS = [
   { href: "/matching", label: "Dedup & Match", icon: GitMerge, badge: true },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
   { href: "/macro", label: "Market Pulse", icon: Globe },
+  { href: "/reviews", label: "Reviews", icon: Star },
   { href: "/vendors", label: "Vendors", icon: Store },
   { href: "/annotations", label: "Data Flags", icon: Flag },
   { href: "/import", label: "Import data", icon: DownloadCloud },
