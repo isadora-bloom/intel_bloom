@@ -4,7 +4,7 @@ import { trpc } from "@/lib/trpc/client";
 import { use } from "react";
 import { format } from "date-fns";
 import { useState } from "react";
-import { ArrowLeft, Upload } from "lucide-react";
+import { ArrowLeft, Upload, Pencil, X, Check, Star } from "lucide-react";
 import Link from "next/link";
 
 type Tab = "overview" | "acquisition" | "planning" | "event" | "reputation";
@@ -21,6 +21,7 @@ export default function ClientRecordPage({ params }: { params: Promise<{ id: str
   const { id } = use(params);
   const [activeTab, setActiveTab] = useState<Tab>("overview");
 
+  const utils = trpc.useUtils();
   const { data, isLoading } = trpc.clients.getById.useQuery({ id });
 
   if (isLoading) {
@@ -112,7 +113,7 @@ export default function ClientRecordPage({ params }: { params: Promise<{ id: str
         <EventTab client={client} vendors={vendors} />
       )}
       {activeTab === "reputation" && (
-        <ReputationTab client={client} />
+        <ReputationTab client={client} onUpdate={() => utils.clients.getById.invalidate({ id })} />
       )}
     </div>
   );
@@ -139,7 +140,6 @@ function OverviewTab({ client }: { client: any }) {
         <Section title="Scores">
           <Row label="Complexity" value={client.complexity_score ? `${client.complexity_score}/100` : null} />
           <Row label="Day-of complexity" value={client.day_of_complexity ? `${client.day_of_complexity}/5` : null} />
-          <Row label="Weather difficulty" value={client.weather_difficulty_score ? `${client.weather_difficulty_score}/10` : null} />
           <Row label="Confidence" value={client.confidence_score ? `${client.confidence_score}%` : null} />
         </Section>
         <Section title="Finance">
@@ -259,7 +259,6 @@ function EventTab({ client, vendors }: { client: any; vendors: any[] }) {
         <Row label="Guest count (final)" value={client.guest_count_final?.toString()} />
         <Row label="Staffing hours" value={client.staffing_hours_actual?.toString()} />
         <Row label="Day-of complexity" value={client.day_of_complexity ? `${client.day_of_complexity}/5` : null} />
-        <Row label="Weather score" value={client.weather_difficulty_score ? `${client.weather_difficulty_score}/10` : null} />
       </Section>
 
       {vendors.length > 0 && (
@@ -277,28 +276,208 @@ function EventTab({ client, vendors }: { client: any; vendors: any[] }) {
   );
 }
 
-function ReputationTab({ client }: { client: any }) {
+const REVIEW_PLATFORMS = ["Google", "The Knot", "WeddingWire", "Facebook", "Zola", "Other"];
+
+function StarPicker({ value, onChange }: { value: number | null; onChange: (v: number) => void }) {
+  const [hover, setHover] = useState<number | null>(null);
+  return (
+    <div className="flex gap-1">
+      {[1, 2, 3, 4, 5].map((n) => (
+        <button
+          key={n}
+          type="button"
+          onMouseEnter={() => setHover(n)}
+          onMouseLeave={() => setHover(null)}
+          onClick={() => onChange(n)}
+          className="focus:outline-none"
+        >
+          <Star
+            size={22}
+            className={`transition-colors ${
+              n <= (hover ?? value ?? 0)
+                ? "fill-amber-400 text-amber-400"
+                : "fill-gray-100 text-gray-300"
+            }`}
+          />
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function ReputationTab({ client, onUpdate }: { client: any; onUpdate: () => void }) {
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState({
+    reviewLeft: client.review_left ?? false,
+    reviewPlatform: client.review_platform ?? "",
+    reviewStarRating: client.review_star_rating ?? null as number | null,
+    reviewText: client.review_text ?? "",
+    referralsGenerated: client.referrals_generated ?? "" as number | "",
+  });
+
+  const update = trpc.clients.update.useMutation({
+    onSuccess: () => { setEditing(false); onUpdate(); },
+  });
+
+  function handleSave() {
+    update.mutate({
+      id: client.id,
+      reviewLeft: form.reviewLeft,
+      reviewPlatform: form.reviewPlatform || undefined,
+      reviewStarRating: form.reviewStarRating ?? undefined,
+      reviewText: form.reviewText || undefined,
+      referralsGenerated: typeof form.referralsGenerated === "number" ? form.referralsGenerated : undefined,
+    });
+  }
+
+  function handleCancel() {
+    setForm({
+      reviewLeft: client.review_left ?? false,
+      reviewPlatform: client.review_platform ?? "",
+      reviewStarRating: client.review_star_rating ?? null,
+      reviewText: client.review_text ?? "",
+      referralsGenerated: client.referrals_generated ?? "",
+    });
+    setEditing(false);
+  }
+
   return (
     <div className="space-y-6">
-      <Section title="Review">
-        <Row label="Left review" value={client.review_left ? "Yes" : client.review_left === false ? "No" : null} />
-        <Row label="Platform" value={client.review_platform} />
-        <Row label="Rating" value={client.review_star_rating ? `${client.review_star_rating} / 5` : null} />
-        <Row label="Weather-adjusted" value={client.review_adjusted_score ? `${client.review_adjusted_score} / 5` : null} />
-        <Row label="Review date" value={client.review_date ? format(new Date(client.review_date), "MMM d, yyyy") : null} />
-      </Section>
+      <div className="bg-white rounded-lg border border-gray-200 p-4">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-sm font-semibold text-gray-700">Review</h3>
+          {!editing ? (
+            <button
+              onClick={() => setEditing(true)}
+              className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 transition-colors"
+            >
+              <Pencil size={12} /> Edit
+            </button>
+          ) : (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleCancel}
+                className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600"
+              >
+                <X size={12} /> Cancel
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={update.isPending}
+                className="flex items-center gap-1 text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700 disabled:opacity-50"
+              >
+                <Check size={12} /> {update.isPending ? "Saving…" : "Save"}
+              </button>
+            </div>
+          )}
+        </div>
 
-      {client.review_text && (
-        <Section title="Review text">
+        {editing ? (
+          <div className="space-y-4">
+            {/* Left review toggle */}
+            <div className="flex items-center justify-between">
+              <label className="text-sm text-gray-500">Left a review?</label>
+              <button
+                type="button"
+                onClick={() => setForm((f) => ({ ...f, reviewLeft: !f.reviewLeft }))}
+                className={`relative inline-flex h-5 w-9 rounded-full transition-colors ${
+                  form.reviewLeft ? "bg-blue-600" : "bg-gray-200"
+                }`}
+              >
+                <span
+                  className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                    form.reviewLeft ? "translate-x-4" : "translate-x-0"
+                  }`}
+                />
+              </button>
+            </div>
+
+            {/* Platform */}
+            <div className="flex items-center justify-between gap-4">
+              <label className="text-sm text-gray-500 flex-shrink-0">Platform</label>
+              <select
+                value={form.reviewPlatform}
+                onChange={(e) => setForm((f) => ({ ...f, reviewPlatform: e.target.value }))}
+                className="border border-gray-300 rounded px-2 py-1 text-sm text-gray-700 w-44"
+              >
+                <option value="">— select —</option>
+                {REVIEW_PLATFORMS.map((p) => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Star rating */}
+            <div className="flex items-center justify-between">
+              <label className="text-sm text-gray-500">Rating</label>
+              <StarPicker
+                value={form.reviewStarRating}
+                onChange={(v) => setForm((f) => ({ ...f, reviewStarRating: v }))}
+              />
+            </div>
+
+            {/* Review text */}
+            <div>
+              <label className="text-sm text-gray-500 block mb-1">Review text</label>
+              <textarea
+                value={form.reviewText}
+                onChange={(e) => setForm((f) => ({ ...f, reviewText: e.target.value }))}
+                placeholder="Paste the review text here…"
+                rows={4}
+                className="w-full border border-gray-300 rounded px-3 py-2 text-sm text-gray-900 placeholder-gray-400 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+
+            {/* Referrals */}
+            <div className="flex items-center justify-between gap-4">
+              <label className="text-sm text-gray-500 flex-shrink-0">Referrals generated</label>
+              <input
+                type="number"
+                min={0}
+                value={form.referralsGenerated}
+                onChange={(e) => setForm((f) => ({ ...f, referralsGenerated: e.target.value === "" ? "" : Number(e.target.value) }))}
+                className="border border-gray-300 rounded px-2 py-1 text-sm text-gray-700 w-20 text-right"
+              />
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-0">
+            {/* Read view */}
+            {client.review_left === true && client.review_star_rating && (
+              <div className="flex items-center gap-2 pb-3 mb-3 border-b border-gray-100">
+                <div className="flex gap-0.5">
+                  {[1, 2, 3, 4, 5].map((n) => (
+                    <Star
+                      key={n}
+                      size={18}
+                      className={n <= client.review_star_rating ? "fill-amber-400 text-amber-400" : "fill-gray-100 text-gray-200"}
+                    />
+                  ))}
+                </div>
+                {client.review_platform && (
+                  <span className="text-xs text-gray-400">on {client.review_platform}</span>
+                )}
+              </div>
+            )}
+            <Row label="Left review" value={client.review_left ? "Yes" : client.review_left === false ? "No" : null} />
+            <Row label="Platform" value={client.review_platform} />
+            <Row label="Referrals generated" value={client.referrals_generated?.toString()} />
+            {!client.review_left && !client.review_star_rating && (
+              <p className="text-sm text-gray-400 pt-1">No review logged yet. Click Edit to add one.</p>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Review text — read view */}
+      {!editing && client.review_text && (
+        <div className="bg-white rounded-lg border border-gray-200 p-4">
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">Review text</h3>
           <blockquote className="text-sm text-gray-600 italic border-l-4 border-gray-200 pl-4">
             {client.review_text}
           </blockquote>
-        </Section>
+        </div>
       )}
-
-      <Section title="Referrals">
-        <Row label="Referrals generated" value={client.referrals_generated?.toString()} />
-      </Section>
     </div>
   );
 }
