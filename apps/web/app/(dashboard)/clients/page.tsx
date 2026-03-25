@@ -172,9 +172,12 @@ function StatusDropdown({ clientId, currentStatus, onStatusChange }: StatusDropd
   );
 }
 
+const PAGE_SIZE = 100;
+
 export default function ClientsPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [page, setPage] = useState(0);
 
   // Lost reason modal state
   const [pendingArchive, setPendingArchive] = useState<{
@@ -187,8 +190,8 @@ export default function ClientsPage() {
   const { data, isLoading } = trpc.clients.list.useQuery({
     search: search || undefined,
     status: statusFilter !== "all" ? (statusFilter as ClientStatus) : undefined,
-    limit: 100,
-    offset: 0,
+    limit: PAGE_SIZE,
+    offset: page * PAGE_SIZE,
   });
 
   const updateMutation = trpc.clients.update.useMutation({
@@ -267,7 +270,7 @@ export default function ClientsPage() {
             type="text"
             placeholder="Search by name or email..."
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => { setSearch(e.target.value); setPage(0); }}
             className="w-full border border-gray-300 rounded-md pl-8 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
@@ -275,7 +278,7 @@ export default function ClientsPage() {
           {["all", ...ALL_STATUSES].map((s) => (
             <button
               key={s}
-              onClick={() => setStatusFilter(s)}
+              onClick={() => { setStatusFilter(s); setPage(0); }}
               className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
                 statusFilter === s
                   ? "bg-blue-600 text-white border-blue-600"
@@ -365,7 +368,7 @@ export default function ClientsPage() {
                   />
                 </td>
                 <td className="px-4 py-3 text-gray-500 text-xs">
-                  {client.resolved_source ?? client.first_touch_platform ?? "—"}
+                  {client.resolved_source ?? client.self_reported_source ?? client.first_touch_platform ?? "—"}
                 </td>
                 <td className="px-4 py-3 text-gray-700">
                   {client.revenue_cents
@@ -382,6 +385,31 @@ export default function ClientsPage() {
           </tbody>
         </table>
       </div>
+
+      {/* Pagination */}
+      {(data?.total ?? 0) > PAGE_SIZE && (
+        <div className="flex items-center justify-between mt-4 text-sm text-gray-500">
+          <span>
+            Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, data?.total ?? 0)} of {data?.total ?? 0}
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              disabled={page === 0}
+              onClick={() => setPage(p => p - 1)}
+              className="px-3 py-1.5 border border-gray-300 rounded text-sm hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              ← Prev
+            </button>
+            <button
+              disabled={(page + 1) * PAGE_SIZE >= (data?.total ?? 0)}
+              onClick={() => setPage(p => p + 1)}
+              className="px-3 py-1.5 border border-gray-300 rounded text-sm hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Next →
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
