@@ -477,7 +477,7 @@ async function seedChannelSpend(): Promise<void> {
         venue_id: VENUE_ID,
         month: monthStr,
         channel: "The Knot",
-        spend_cents: 35000,
+        amount_cents: 35000,
       });
 
       // Google Ads: $200-500/month (varying)
@@ -485,7 +485,7 @@ async function seedChannelSpend(): Promise<void> {
         venue_id: VENUE_ID,
         month: monthStr,
         channel: "Google Ads",
-        spend_cents: rand(20000, 50000),
+        amount_cents: rand(20000, 50000),
       });
 
       // Instagram: $0-150/month (varying)
@@ -493,7 +493,7 @@ async function seedChannelSpend(): Promise<void> {
         venue_id: VENUE_ID,
         month: monthStr,
         channel: "Instagram",
-        spend_cents: rand(0, 15000),
+        amount_cents: rand(0, 15000),
       });
     }
   }
