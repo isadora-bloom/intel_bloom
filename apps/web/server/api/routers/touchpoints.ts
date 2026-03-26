@@ -19,7 +19,7 @@ export const touchpointsRouter = router({
       year: z.number().int().optional(),
     }))
     .query(async ({ ctx, input }) => {
-      let q = ctx.supabase
+      let q = ctx.db
         .from("channel_spend")
         .select("*")
         .eq("venue_id", ctx.venueId)
@@ -40,11 +40,11 @@ export const touchpointsRouter = router({
       channel:      z.string(),
       month:        z.string(), // YYYY-MM-01
       amountCents:  z.number().int().min(0),
-      billingType:  z.string().optional(),
+      billingType:  z.enum(["monthly_subscription", "annual_subscription", "pay_per_click", "flat_fee"]).optional(),
       notes:        z.string().optional(),
     }))
     .mutation(async ({ ctx, input }) => {
-      const { error } = await ctx.supabase
+      const { error } = await ctx.db
         .from("channel_spend")
         .upsert({
           venue_id:     ctx.venueId,
@@ -62,7 +62,7 @@ export const touchpointsRouter = router({
   deleteChannelSpend: venueProcedure
     .input(z.object({ id: z.string().uuid() }))
     .mutation(async ({ ctx, input }) => {
-      const { error } = await ctx.supabase
+      const { error } = await ctx.db
         .from("channel_spend")
         .delete()
         .eq("id", input.id)
@@ -124,7 +124,7 @@ export const touchpointsRouter = router({
       // Insert in batches of 100
       for (let i = 0; i < rows.length; i += 100) {
         const batch = rows.slice(i, i + 100);
-        const { data, error } = await ctx.supabase
+        const { data, error } = await ctx.db
           .from("pre_inquiry_signals")
           .upsert(batch, {
             onConflict: "venue_id,platform,first_name,last_initial,signal_type,occurred_at",
@@ -157,7 +157,7 @@ export const touchpointsRouter = router({
       offset: z.number().int().min(0).default(0),
     }))
     .query(async ({ ctx, input }) => {
-      let q = ctx.supabase
+      let q = ctx.db
         .from("pre_inquiry_signals")
         .select("*", { count: "exact" })
         .eq("venue_id", ctx.venueId)
@@ -181,10 +181,10 @@ export const touchpointsRouter = router({
     .mutation(async ({ ctx, input }) => {
       const status = input.action === "confirm" ? "matched" : "dismissed";
 
-      const { error } = await ctx.supabase
+      const { error } = await ctx.db
         .from("pre_inquiry_signals")
         .update({
-          matched_inquiry_id: input.action === "confirm" ? input.inquiryId : null,
+          linked_inquiry_id: input.action === "confirm" ? input.inquiryId : null,
           match_status: status,
           match_reviewed_by: ctx.user.id,
           match_reviewed_at: new Date().toISOString(),
@@ -201,11 +201,11 @@ export const touchpointsRouter = router({
   // High-level: how many pre-inquiry signals have been matched vs. unmatched
   getAttributionHealth: venueProcedure.query(async ({ ctx }) => {
     const [signals, inquiries] = await Promise.all([
-      ctx.supabase
+      ctx.db
         .from("pre_inquiry_signals")
         .select("match_status, signal_type", { count: "exact" })
         .eq("venue_id", ctx.venueId),
-      ctx.supabase
+      ctx.db
         .from("inquiries")
         .select("touchpoint_classification, inquiry_intent, first_contact_channel")
         .eq("venue_id", ctx.venueId)
@@ -249,6 +249,61 @@ export const touchpointsRouter = router({
         intentChosen:   intentCounts["chosen"] ?? 0,
         intentBlast:    intentCounts["also_contacted"] ?? 0,
       },
+    };
+  }),
+
+  // ── Leads (pre-inquiry named touches) ─────────────────────────────────
+  getLeads: venueProcedure
+    .input(z.object({
+      limit: z.number().int().default(50),
+      offset: z.number().int().default(0),
+      linked: z.boolean().optional(), // filter: linked to inquiry or not
+    }).optional())
+    .query(async ({ ctx, input }) => {
+      let query = ctx.db
+        .from("leads")
+        .select("*")
+        .eq("venue_id", ctx.venueId)
+        .order("source_date", { ascending: false })
+        .range(input?.offset ?? 0, (input?.offset ?? 0) + (input?.limit ?? 50) - 1);
+
+      if (input?.linked === true) query = query.not("linked_client_id", "is", null);
+      if (input?.linked === false) query = query.is("linked_client_id", null);
+
+      const { data, error } = await query;
+      if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
+
+      // Also get total count
+      const { count } = await ctx.db
+        .from("leads")
+        .select("id", { count: "exact", head: true })
+        .eq("venue_id", ctx.venueId);
+
+      return { leads: data ?? [], total: count ?? 0 };
+    }),
+
+  // ── Referrals summary ─────────────────────────────────────────────────
+  getReferralsSummary: venueProcedure.query(async ({ ctx }) => {
+    const { data } = await ctx.db
+      .from("referrals")
+      .select("id, referring_client_id, referred_client_id, source, converted, referral_noted_at")
+      .eq("venue_id", ctx.venueId)
+      .order("referral_noted_at", { ascending: false });
+
+    const referrals = data ?? [];
+    const total = referrals.length;
+    const converted = referrals.filter(r => r.converted).length;
+    const conversionRate = total > 0 ? converted / total : 0;
+
+    // Unique referrers
+    const referrerIds = new Set(referrals.map(r => r.referring_client_id).filter(Boolean));
+
+    return {
+      total,
+      converted,
+      conversionRate,
+      uniqueReferrers: referrerIds.size,
+      recent: referrals.slice(0, 10),
     };
   }),
 });

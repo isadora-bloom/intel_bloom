@@ -6,6 +6,8 @@ import { useSearchParams } from "next/navigation";
 import { type BriefingInsight } from "@/server/api/routers/insights";
 import SetupChecklist from "@/components/SetupChecklist";
 import HoldAlertsWidget from "@/components/HoldAlertsWidget";
+import AnomalyAlerts from "@/components/AnomalyAlerts";
+import CrossIntelligence from "@/components/CrossIntelligence";
 import {
   TrendingUp,
   TrendingDown,
@@ -30,6 +32,7 @@ import {
   DollarSign,
   Mail,
   ArrowRight,
+  ShieldCheck,
 } from "lucide-react";
 
 const SENTIMENT_STYLES: Record<
@@ -76,11 +79,12 @@ const EXAMPLE_QUESTIONS = [
 
 // Funnel stage config — maps analytics.stagePipeline stageCounts keys to display labels
 const FUNNEL_STAGES = [
-  { key: "inquiries",  label: "Inquiries",   color: "bg-violet-400" },
-  { key: "touring",    label: "Touring",     color: "bg-blue-400" },
-  { key: "hold",       label: "On hold",     color: "bg-amber-400" },
-  { key: "contracted", label: "Contracted",  color: "bg-emerald-400" },
-  { key: "completed",  label: "Completed",   color: "bg-gray-300" },
+  { key: "inquiries",   label: "Inquiries",   color: "bg-violet-400" },
+  { key: "tourBooked",  label: "Tour booked", color: "bg-sky-400" },
+  { key: "toured",      label: "Toured",      color: "bg-blue-400" },
+  { key: "held",        label: "On hold",     color: "bg-amber-400" },
+  { key: "contracted",  label: "Contracted",  color: "bg-emerald-400" },
+  { key: "completed",   label: "Completed",   color: "bg-gray-300" },
 ] as const;
 
 function formatRevenue(cents: number): string {
@@ -181,6 +185,84 @@ function FunnelBar({ stageCounts }: { stageCounts: Record<string, number> }) {
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+function HealthScoreWidget() {
+  const { data, isLoading } = trpc.analytics.getHealthScore.useQuery(undefined, {
+    staleTime: 1000 * 60 * 5,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="bg-white border border-gray-200 rounded-xl p-5 animate-pulse">
+        <div className="h-3 bg-gray-100 rounded w-32 mb-4" />
+        <div className="flex gap-4">
+          <div className="h-16 w-16 bg-gray-100 rounded-full" />
+          <div className="flex-1 space-y-2 pt-2">
+            {[...Array(3)].map((_, i) => <div key={i} className="h-2.5 bg-gray-100 rounded" />)}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!data) return null;
+
+  const gradeColor =
+    data.grade === "A" ? "text-green-600" :
+    data.grade === "B" ? "text-blue-600" :
+    data.grade === "C" ? "text-amber-600" : "text-red-500";
+
+  const ringColor =
+    data.grade === "A" ? "stroke-green-500" :
+    data.grade === "B" ? "stroke-blue-500" :
+    data.grade === "C" ? "stroke-amber-500" : "stroke-red-400";
+
+  const circumference = 2 * Math.PI * 24;
+  const filled = (data.total / 100) * circumference;
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl p-5">
+      <div className="flex items-center gap-2 mb-4">
+        <ShieldCheck size={14} className="text-gray-400" />
+        <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Venue health score</h2>
+      </div>
+      <div className="flex items-center gap-5">
+        {/* Ring */}
+        <div className="relative flex-shrink-0 w-14 h-14">
+          <svg viewBox="0 0 56 56" className="-rotate-90 w-14 h-14">
+            <circle cx="28" cy="28" r="24" fill="none" className="stroke-gray-100" strokeWidth="5" />
+            <circle
+              cx="28" cy="28" r="24" fill="none"
+              className={ringColor}
+              strokeWidth="5"
+              strokeDasharray={`${filled} ${circumference}`}
+              strokeLinecap="round"
+            />
+          </svg>
+          <div className="absolute inset-0 flex flex-col items-center justify-center">
+            <span className={`text-xl font-bold leading-none ${gradeColor}`}>{data.grade}</span>
+            <span className="text-[10px] text-gray-400 leading-none mt-0.5">{data.total}/100</span>
+          </div>
+        </div>
+        {/* Dimensions */}
+        <div className="flex-1 space-y-1.5">
+          {data.dimensions.map((d) => (
+            <div key={d.label} className="flex items-center gap-2">
+              <span className="text-xs text-gray-500 w-24 flex-shrink-0">{d.label}</span>
+              <div className="flex-1 bg-gray-100 rounded-full h-1.5 overflow-hidden">
+                <div
+                  className="h-full bg-blue-400 rounded-full transition-all"
+                  style={{ width: `${(d.score / d.max) * 100}%` }}
+                />
+              </div>
+              <span className="text-xs text-gray-400 w-8 text-right flex-shrink-0">{d.score}/{d.max}</span>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -353,7 +435,7 @@ export default function DashboardPage() {
   // Compute stats from clients list
   const clients = clientsData?.clients ?? [];
   const activeClients = clients.filter((c) =>
-    ["booked", "planning"].includes(c.status as string)
+    ["held", "contracted"].includes(c.status as string)
   ).length;
 
   const reviewedClients = clients.filter(
@@ -366,7 +448,7 @@ export default function DashboardPage() {
       : null;
 
   const bookedRevenueCents = clients
-    .filter((c) => ["booked", "planning"].includes(c.status as string))
+    .filter((c) => ["held", "contracted"].includes(c.status as string))
     .reduce((sum, c) => sum + (((c as any).revenue_cents as number | null) ?? 0), 0);
 
   const thisMonthInquiries = monthInquiriesData?.total ?? 0;
@@ -374,7 +456,7 @@ export default function DashboardPage() {
   const statsLoading = clientsLoading || inquiriesLoading;
 
   return (
-    <div className="max-w-3xl space-y-6">
+    <div className="max-w-7xl space-y-6">
       {upgradedBannerVisible && (
         <div className="flex items-center justify-between gap-3 bg-green-50 border border-green-200 text-green-800 text-sm font-medium rounded-xl px-4 py-3">
           <span>Welcome to Bloom Intelligence! Your subscription is active.</span>
@@ -410,7 +492,7 @@ export default function DashboardPage() {
             <StatCard
               label="Active clients"
               value={String(activeClients)}
-              sub="booked + planning"
+              sub="held + contracted"
               icon={Users}
               iconBg="bg-blue-50"
               iconColor="text-blue-500"
@@ -434,7 +516,7 @@ export default function DashboardPage() {
             <StatCard
               label="Revenue booked"
               value={bookedRevenueCents > 0 ? formatRevenue(bookedRevenueCents) : "—"}
-              sub="booked + planning clients"
+              sub="held + contracted clients"
               icon={DollarSign}
               iconBg="bg-emerald-50"
               iconColor="text-emerald-500"
@@ -443,44 +525,28 @@ export default function DashboardPage() {
         )}
       </div>
 
-      {/* Hold alerts */}
-      <HoldAlertsWidget />
+      {/* Two-column layout */}
+      <div className="grid grid-cols-1 xl:grid-cols-[1fr_320px] gap-6 items-start">
 
-      {/* Setup checklist (auto-hides when complete) */}
-      {venue && <SetupChecklist venueId={venue.id} />}
+        {/* ── LEFT: Intelligence ── */}
+        <div className="space-y-5 min-w-0">
+          {/* Ask about your business */}
+          <AskInsight />
 
-      {/* Mini funnel bar */}
-      {pipelineLoading ? (
-        <div className="bg-white border border-gray-200 rounded-xl p-5 animate-pulse">
-          <div className="h-3 bg-gray-100 rounded w-32 mb-4" />
-          <div className="h-2.5 bg-gray-100 rounded-full mb-4" />
-          <div className="flex gap-4">
-            {[...Array(5)].map((_, i) => (
-              <div key={i} className="h-3 bg-gray-100 rounded w-16" />
-            ))}
-          </div>
-        </div>
-      ) : (
-        <FunnelBar stageCounts={pipelineData?.stageCounts ?? {}} />
-      )}
-
-      {/* Ask about your business */}
-      <AskInsight />
-
-      {/* Briefing insights */}
-      {isLoading && (
-        <div className="space-y-3">
-          {[...Array(5)].map((_, i) => (
-            <div key={i} className="bg-white border border-gray-200 rounded-lg p-5 animate-pulse">
-              <div className="h-4 bg-gray-100 rounded w-3/4 mb-3" />
-              <div className="h-3 bg-gray-100 rounded w-full mb-2" />
-              <div className="h-3 bg-gray-100 rounded w-2/3" />
+          {/* Briefing insights */}
+          {isLoading && (
+            <div className="space-y-3">
+              {[...Array(4)].map((_, i) => (
+                <div key={i} className="bg-white border border-gray-200 rounded-lg p-5 animate-pulse">
+                  <div className="h-4 bg-gray-100 rounded w-3/4 mb-3" />
+                  <div className="h-3 bg-gray-100 rounded w-full mb-2" />
+                  <div className="h-3 bg-gray-100 rounded w-2/3" />
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-      )}
+          )}
 
-      {!isLoading && insights && insights.length === 0 && (
+          {!isLoading && insights && insights.length === 0 && (
         <div className="border border-dashed border-gray-200 rounded-xl p-10">
           <div className="w-10 h-10 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-4">
             <Sparkles size={18} className="text-blue-500" />
@@ -510,32 +576,65 @@ export default function DashboardPage() {
             </a>
           </div>
         </div>
-      )}
+          )}
 
-      {!isLoading && insights && insights.length > 0 && (
-        <div className="space-y-8">
-          {(["past", "present", "future", "recommendation"] as const).map((tf) => {
-            const section = insights.filter(i => i.timeframe === tf && i.dataAvailable);
-            if (!section.length) return null;
-            const meta = SECTION_META[tf];
-            const Icon = meta.icon;
-            return (
-              <div key={tf}>
-                <div className="flex items-center gap-2 mb-3">
-                  <Icon size={14} className="text-gray-400" />
-                  <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{meta.label}</h2>
-                  <span className="text-xs text-gray-300">— {meta.description}</span>
-                </div>
-                <div className="space-y-3">
-                  {section.map((insight) => (
-                    <InsightCard key={insight.id} insight={insight} />
-                  ))}
-                </div>
-              </div>
-            );
-          })}
+          {!isLoading && insights && insights.length > 0 && (
+            <div className="space-y-7">
+              {(["past", "present", "future", "recommendation"] as const).map((tf) => {
+                const section = insights.filter(i => i.timeframe === tf && i.dataAvailable);
+                if (!section.length) return null;
+                const meta = SECTION_META[tf];
+                const Icon = meta.icon;
+                return (
+                  <div key={tf}>
+                    <div className="flex items-center gap-2 mb-3">
+                      <Icon size={13} className="text-gray-400" />
+                      <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{meta.label}</h2>
+                    </div>
+                    <div className="space-y-2.5">
+                      {section.map((insight) => (
+                        <InsightCard key={insight.id} insight={insight} />
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
-      )}
+
+        {/* ── RIGHT: Pipeline + Health ── */}
+        <div className="space-y-4">
+          {/* Anomaly alerts */}
+          <AnomalyAlerts />
+
+          {/* Pipeline funnel */}
+          {pipelineLoading ? (
+            <div className="bg-white border border-gray-200 rounded-xl p-5 animate-pulse">
+              <div className="h-3 bg-gray-100 rounded w-32 mb-4" />
+              <div className="h-2 bg-gray-100 rounded-full mb-4" />
+              <div className="space-y-1.5">
+                {[...Array(5)].map((_, i) => <div key={i} className="h-2.5 bg-gray-100 rounded w-full" />)}
+              </div>
+            </div>
+          ) : (
+            <FunnelBar stageCounts={pipelineData?.stageCounts ?? {}} />
+          )}
+
+          {/* Cross-data intelligence */}
+          <CrossIntelligence />
+
+          {/* Health score */}
+          <HealthScoreWidget />
+
+          {/* Hold alerts */}
+          <HoldAlertsWidget />
+
+          {/* Setup checklist */}
+          {venue && <SetupChecklist venueId={venue.id} />}
+        </div>
+
+      </div>
     </div>
   );
 }

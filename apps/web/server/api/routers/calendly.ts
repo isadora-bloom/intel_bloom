@@ -35,7 +35,7 @@ function extractQA(qa: any[], ...keywords: string[]): string | null {
 export const calendlyRouter = router({
   // Sync all Calendly events (active + cancelled, past + future) into the tours table
   syncTours: venueProcedure.mutation(async ({ ctx }) => {
-    const { data: venueData, error: venueError } = await ctx.supabase
+    const { data: venueData, error: venueError } = await ctx.db
       .from("venues")
       .select("calendly_api_key")
       .eq("id", ctx.venueId)
@@ -54,7 +54,7 @@ export const calendlyRouter = router({
     if (!userUri) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Could not retrieve Calendly user URI." });
 
     // Fetch existing external_ids to skip already-synced events
-    const { data: existingTours } = await ctx.supabase
+    const { data: existingTours } = await ctx.db
       .from("tours")
       .select("external_id")
       .eq("venue_id", ctx.venueId)
@@ -65,7 +65,7 @@ export const calendlyRouter = router({
     );
 
     // Also collect legacy URIs stored in notes_raw JSON (backwards compat)
-    const { data: legacyTours } = await ctx.supabase
+    const { data: legacyTours } = await ctx.db
       .from("tours")
       .select("notes_raw")
       .eq("venue_id", ctx.venueId)
@@ -150,7 +150,7 @@ export const calendlyRouter = router({
         // Try to auto-match to an existing client by email
         let clientId: string | null = null;
         if (inviteeEmail) {
-          const { data: matchedClient } = await ctx.supabase
+          const { data: matchedClient } = await ctx.db
             .from("clients")
             .select("id")
             .eq("venue_id", ctx.venueId)
@@ -160,7 +160,7 @@ export const calendlyRouter = router({
           clientId = matchedClient?.id ?? null;
         }
 
-        const { error: insertError } = await ctx.supabase.from("tours").insert({
+        const { error: insertError } = await ctx.db.from("tours").insert({
           venue_id: ctx.venueId,
           client_id: clientId,
           scheduled_at: scheduledAt,
@@ -187,7 +187,7 @@ export const calendlyRouter = router({
           if (clientId && qa.length > 0) {
             const parsed = parseCalendlyQA(qa);
 
-            const { data: existingClient } = await ctx.supabase
+            const { data: existingClient } = await ctx.db
               .from("clients")
               .select("event_date, resolved_source, guest_count_initial, status")
               .eq("id", clientId)
@@ -220,7 +220,7 @@ export const calendlyRouter = router({
               clientUpdates.resolved_source_confidence = confidenceToScore(parsed.sourceConfidence);
 
               if (existingClient?.resolved_source !== parsed.resolvedSource) {
-                await ctx.supabase.from("activity_log").insert({
+                await ctx.db.from("activity_log").insert({
                   venue_id: ctx.venueId,
                   client_id: clientId,
                   event_type: "source_attribution_updated",
@@ -231,14 +231,14 @@ export const calendlyRouter = router({
             }
 
             if (Object.keys(clientUpdates).length > 0) {
-              await ctx.supabase
+              await ctx.db
                 .from("clients")
                 .update(clientUpdates)
                 .eq("id", clientId);
             }
           } else if (clientId && extractedEventDate) {
             // Fallback: no Q&A but we have a date from the raw question
-            await ctx.supabase
+            await ctx.db
               .from("clients")
               .update({ event_date: extractedEventDate })
               .eq("id", clientId)
@@ -257,7 +257,7 @@ export const calendlyRouter = router({
   getUpcomingTours: venueProcedure.query(async ({ ctx }) => {
     const now = new Date().toISOString();
 
-    const { data, error } = await ctx.supabase
+    const { data, error } = await ctx.db
       .from("tours")
       .select("*, clients(id, name_primary, email_primary)")
       .eq("venue_id", ctx.venueId)
@@ -285,7 +285,7 @@ export const calendlyRouter = router({
 
   // Aggregate tour stats for this venue
   getStats: venueProcedure.query(async ({ ctx }) => {
-    const { data, error } = await ctx.supabase
+    const { data, error } = await ctx.db
       .from("tours")
       .select("completed, cancelled, booking_conversion_days")
       .eq("venue_id", ctx.venueId);

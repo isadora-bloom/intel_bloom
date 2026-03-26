@@ -37,17 +37,50 @@ model Venue {
   plan               String  @default("founder")
   monthlyPriceCents  Int     @default(25000) @map("monthly_price_cents")
 
+  // Organisation
+  organisationId String? @map("organisation_id") @db.Uuid
+
+  // Branding
+  region         String?
+  countyFips     String?  @map("county_fips")
+  logoUrl        String?  @map("logo_url")
+  primaryColor   String?  @default("#1A6B6B") @map("primary_color")
+  secondaryColor String?  @default("#B07080") @map("secondary_color")
+  fontFamily     String?  @default("system") @map("font_family")
+  customDomain   String?  @map("custom_domain")
+
+  // Sage AI config
+  sageTone             String?  @default("warm_professional") @map("sage_tone")
+  sageGreeting         String?  @map("sage_greeting")
+  sageAutoReply        Boolean  @default(true) @map("sage_auto_reply")
+  sageVoiceDescription String?  @map("sage_voice_description")
+
+  // Vendor & packages
+  vendorFitWeights Json? @map("vendor_fit_weights")
+  packages         Json?
+
+  // Capacity / pricing
+  demandPremiumThreshold Int @default(5) @map("demand_premium_threshold")
+  maxEventsPerMonth      Int? @map("max_events_per_month")
+
   // Integrations
-  honeybookApiKey  String? @map("honeybook_api_key")
-  knotVenueId      String? @map("knot_venue_id")
-  googlePlaceId    String? @map("google_place_id")
-  timezone         String  @default("America/New_York")
-  onboardingComplete Boolean @default(false) @map("onboarding_complete")
+  honeybookApiKey       String? @map("honeybook_api_key")
+  knotVenueId           String? @map("knot_venue_id")
+  googlePlaceId         String? @map("google_place_id")
+  timezone              String  @default("America/New_York")
+  onboardingComplete    Boolean @default(false) @map("onboarding_complete")
+  gmailOauthToken       String? @map("gmail_oauth_token")
+  ga4PropertyId         String? @map("ga4_property_id")
+  googleAdsCustomerId   String? @map("google_ads_customer_id")
+  instagramBusinessId   String? @map("instagram_business_id")
+  trendsCustomTerms     String[] @map("trends_custom_terms")
+  calendlyApiKey        String? @map("calendly_api_key")
 
   // Aggregate pool
   contributesToBenchmark Boolean @default(true) @map("contributes_to_benchmark")
 
   // Relations — original
+  organisation          Organisation? @relation(fields: [organisationId], references: [id])
   venueUsers            VenueUser[]
   clients               Client[]
   inquiries             Inquiry[]
@@ -73,6 +106,25 @@ model Venue {
   socialPosts           SocialPost[]
   socialApiConnections  SocialApiConnection[]
   websiteTraffic        WebsiteTraffic[]
+  // Relations — added (new models)
+  anomalyDetections     AnomalyDetection[]
+  lostDeals             LostDeal[]
+  campaigns             Campaign[]
+  responseAlerts        ResponseAlert[]
+  revenueForecast       RevenueForecast[]
+  venueHealth           VenueHealth[]
+  venueCapacity         VenueCapacity[]
+  aiUsageLogs           AiUsageLog[]
+  dataAccessLogs        DataAccessLog[]
+  weeklyInsights        WeeklyInsight[]
+  customerHealth        CustomerHealth[]
+  contentTouchpoints    ContentTouchpoint[]
+  emailThreads          EmailThread[]
+  emailMessages         EmailMessage[]
+  websiteSessions       WebsiteSession[]
+  userInvitations       UserInvitation[]
+  userSessions          UserSession[]
+  vendorAvailability    VendorAvailability[]
 
   @@map("venues")
 }
@@ -81,13 +133,18 @@ model Venue {
 // VENUE USERS
 // ============================================================
 model VenueUser {
-  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  venueId   String   @map("venue_id") @db.Uuid
-  userId    String   @map("user_id") @db.Uuid
-  role      String   @default("member")
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId         String    @map("venue_id") @db.Uuid
+  userId          String    @map("user_id") @db.Uuid
+  role            String    @default("member")
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  organisationId  String?   @map("organisation_id") @db.Uuid
+  lastLoginAt     DateTime? @map("last_login_at") @db.Timestamptz(6)
+  isActive        Boolean   @default(true) @map("is_active")
+  invitedBy       String?   @map("invited_by") @db.Uuid
 
-  venue Venue @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  venue        Venue         @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  organisation Organisation? @relation(fields: [organisationId], references: [id])
 
   @@unique([venueId, userId])
   @@map("venue_users")
@@ -213,6 +270,11 @@ model Client {
   reviews           Review[]
   referralsGiven    Referral[]               @relation("ReferralFrom")
   referralsReceived Referral[]               @relation("ReferralTo")
+  // Relations — new models
+  lostDeals           LostDeal[]
+  contentTouchpoints  ContentTouchpoint[]
+  emailThreads        EmailThread[]
+  websiteSessions     WebsiteSession[]        @relation("WebsiteSessionClient")
 
   @@map("clients")
 }
@@ -299,6 +361,9 @@ model Inquiry {
   preInquirySignals PreInquirySignal[]
   // referrals that arrived through this inquiry
   referrals         Referral[]
+  // New model relations
+  responseAlerts    ResponseAlert[]
+  lostDeals         LostDeal[]
 
   @@map("inquiries")
 }
@@ -415,6 +480,7 @@ model Vendor {
 
   venue         Venue          @relation(fields: [venueId], references: [id], onDelete: Cascade)
   clientVendors ClientVendor[]
+  availability  VendorAvailability[]
 
   @@map("vendors")
 }
@@ -897,4 +963,436 @@ model WebsiteTraffic {
 
   @@unique([venueId, date, source, medium])
   @@map("website_traffic")
+}
+
+// ============================================================
+// ORGANISATIONS — multi-venue parent entity
+// ============================================================
+model Organisation {
+  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  name                  String
+  slug                  String   @unique
+  logoUrl               String?  @map("logo_url")
+  primaryColor          String?  @map("primary_color")
+  billingEmail          String?  @map("billing_email")
+  plan                  String   @default("enterprise")
+  monthlyPlatformFeeCents Int    @default(0) @map("monthly_platform_fee_cents")
+  perVenueFeeCents      Int      @default(15000) @map("per_venue_fee_cents")
+
+  // Relations
+  venues              Venue[]
+  venueUsers          VenueUser[]
+  userInvitations     UserInvitation[]
+  anomalyDetections   AnomalyDetection[]
+  campaigns           Campaign[]
+  revenueForecast     RevenueForecast[]
+
+  @@map("organisations")
+}
+
+// ============================================================
+// USER INVITATIONS — invite links for venue team members
+// ============================================================
+model UserInvitation {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId         String    @map("venue_id") @db.Uuid
+  organisationId  String?   @map("organisation_id") @db.Uuid
+  email           String
+  role            String
+  invitedBy       String    @map("invited_by") @db.Uuid
+  invitedAt       DateTime  @default(now()) @map("invited_at") @db.Timestamptz(6)
+  acceptedAt      DateTime? @map("accepted_at") @db.Timestamptz(6)
+  expiresAt       DateTime  @map("expires_at") @db.Timestamptz(6)
+  token           String    @unique
+  status          String    @default("pending")
+
+  venue        Venue         @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  organisation Organisation? @relation(fields: [organisationId], references: [id])
+
+  @@map("user_invitations")
+}
+
+// ============================================================
+// USER SESSIONS — login / session tracking
+// ============================================================
+model UserSession {
+  id                     String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId                 String    @map("user_id") @db.Uuid
+  venueId                String?   @map("venue_id") @db.Uuid
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  ipAddress              String?   @map("ip_address")
+  userAgent              String?   @map("user_agent")
+  deviceType             String?   @map("device_type")
+  sessionDurationMinutes Int?      @map("session_duration_minutes")
+
+  venue Venue? @relation(fields: [venueId], references: [id])
+
+  @@map("user_sessions")
+}
+
+// ============================================================
+// ANOMALY DETECTIONS — metric anomaly alerts
+// ============================================================
+model AnomalyDetection {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId           String    @map("venue_id") @db.Uuid
+  organisationId    String?   @map("organisation_id") @db.Uuid
+  detectedAt        DateTime  @map("detected_at") @db.Timestamptz(6)
+  metric            String
+  direction         String
+  magnitudePct      Decimal   @map("magnitude_pct") @db.Decimal(6, 2)
+  periodCurrent     String?   @map("period_current")
+  periodBaseline    String?   @map("period_baseline")
+  baselineType      String?   @map("baseline_type")
+  currentValue      Decimal?  @map("current_value") @db.Decimal(12, 2)
+  baselineValue     Decimal?  @map("baseline_value") @db.Decimal(12, 2)
+  aiPossibleCauses  Json?     @map("ai_possible_causes")
+  aiConfidence      Int?      @map("ai_confidence")
+  aiRecommendation  String?   @map("ai_recommendation")
+  status            String    @default("new")
+  severity          String    @default("info")
+  acknowledgedBy    String?   @map("acknowledged_by")
+  acknowledgedAt    DateTime? @map("acknowledged_at") @db.Timestamptz(6)
+  annotationId      String?   @map("annotation_id") @db.Uuid
+
+  venue        Venue         @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  organisation Organisation? @relation(fields: [organisationId], references: [id])
+
+  @@map("anomaly_detections")
+}
+
+// ============================================================
+// LOST DEALS — pipeline loss tracking
+// ============================================================
+model LostDeal {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId           String    @map("venue_id") @db.Uuid
+  clientId          String?   @map("client_id") @db.Uuid
+  inquiryId         String?   @map("inquiry_id") @db.Uuid
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  lostAtStage       String    @map("lost_at_stage")
+  reasonCategory    String?   @map("reason_category")
+  reasonDetail      String?   @map("reason_detail")
+  competitorName    String?   @map("competitor_name")
+  coordinator       String?
+  daysInStage       Int?      @map("days_in_stage")
+  recoveryAttempted Boolean   @default(false) @map("recovery_attempted")
+  recoveryOutcome   String?   @map("recovery_outcome")
+
+  venue   Venue    @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  client  Client?  @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  inquiry Inquiry? @relation(fields: [inquiryId], references: [id], onDelete: SetNull)
+
+  @@map("lost_deals")
+}
+
+// ============================================================
+// CAMPAIGNS — marketing campaign tracking
+// ============================================================
+model Campaign {
+  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId                 String?   @map("venue_id") @db.Uuid
+  organisationId          String?   @map("organisation_id") @db.Uuid
+  createdAt               DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  name                    String
+  campaignType            String?   @map("campaign_type")
+  channel                 String?
+  startDate               DateTime? @map("start_date") @db.Date
+  endDate                 DateTime? @map("end_date") @db.Date
+  spendCents              Int?      @map("spend_cents")
+  inquiriesAttributed     Int       @default(0) @map("inquiries_attributed")
+  toursAttributed         Int       @default(0) @map("tours_attributed")
+  bookingsAttributed      Int       @default(0) @map("bookings_attributed")
+  revenueAttributedCents  Int       @default(0) @map("revenue_attributed_cents")
+  costPerInquiryCents     Int?      @map("cost_per_inquiry_cents")
+  costPerBookingCents     Int?      @map("cost_per_booking_cents")
+  roiRatio                Decimal?  @map("roi_ratio") @db.Decimal(6, 2)
+
+  venue        Venue?        @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  organisation Organisation? @relation(fields: [organisationId], references: [id])
+
+  @@map("campaigns")
+}
+
+// ============================================================
+// RESPONSE ALERTS — inquiry response time alerts
+// ============================================================
+model ResponseAlert {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId           String    @map("venue_id") @db.Uuid
+  inquiryId         String    @map("inquiry_id") @db.Uuid
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  alertType         String    @map("alert_type")
+  thresholdMinutes  Int?      @map("threshold_minutes")
+  actualMinutes     Int?      @map("actual_minutes")
+  resolved          Boolean   @default(false)
+  resolvedAt        DateTime? @map("resolved_at") @db.Timestamptz(6)
+
+  venue   Venue   @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  inquiry Inquiry @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
+
+  @@map("response_alerts")
+}
+
+// ============================================================
+// REVENUE FORECASTS — projected revenue by period
+// ============================================================
+model RevenueForecast {
+  id                          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId                     String?   @map("venue_id") @db.Uuid
+  organisationId              String?   @map("organisation_id") @db.Uuid
+  forecastDate                DateTime  @map("forecast_date") @db.Date
+  periodStart                 DateTime  @map("period_start") @db.Date
+  periodEnd                   DateTime  @map("period_end") @db.Date
+  contractedRevenueCents      Int?      @map("contracted_revenue_cents")
+  heldRevenueCents            Int?      @map("held_revenue_cents")
+  pipelineRevenueCents        Int?      @map("pipeline_revenue_cents")
+  totalForecastCents          Int?      @map("total_forecast_cents")
+  samePeriodPriorYearCents    Int?      @map("same_period_prior_year_cents")
+  forecastVsPriorYearPct      Decimal?  @map("forecast_vs_prior_year_pct") @db.Decimal(5, 2)
+  confidenceLevel             String?   @map("confidence_level")
+  contributingFactors         Json?     @map("contributing_factors")
+
+  venue        Venue?        @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  organisation Organisation? @relation(fields: [organisationId], references: [id])
+
+  @@map("revenue_forecasts")
+}
+
+// ============================================================
+// VENUE HEALTH — composite health scores
+// ============================================================
+model VenueHealth {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId             String    @map("venue_id") @db.Uuid
+  calculatedAt        DateTime  @map("calculated_at") @db.Timestamptz(6)
+  healthScore         Int?      @map("health_score")
+  status              String?
+  bookingPaceScore    Int?      @map("booking_pace_score")
+  conversionScore     Int?      @map("conversion_score")
+  responseTimeScore   Int?      @map("response_time_score")
+  reviewTrendScore    Int?      @map("review_trend_score")
+  inquiryTrendScore   Int?      @map("inquiry_trend_score")
+  lostDealScore       Int?      @map("lost_deal_score")
+  alerts              Json?
+  recommendations     Json?
+
+  venue Venue @relation(fields: [venueId], references: [id], onDelete: Cascade)
+
+  @@map("venue_health")
+}
+
+// ============================================================
+// VENUE CAPACITY — monthly capacity tracking
+// ============================================================
+model VenueCapacity {
+  id                          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId                     String    @map("venue_id") @db.Uuid
+  month                       DateTime  @db.Date
+  year                        Int
+  totalAvailableDates         Int?      @map("total_available_dates")
+  bookedDates                 Int?      @map("booked_dates")
+  heldDates                   Int?      @map("held_dates")
+  occupancyPct                Decimal?  @map("occupancy_pct") @db.Decimal(5, 2)
+  avgRevenuePerEventCents     Int?      @map("avg_revenue_per_event_cents")
+  potentialRevenueCents       Int?      @map("potential_revenue_cents")
+  isPeak                      Boolean?  @map("is_peak")
+  suggestedPriceAdjustmentPct Decimal?  @map("suggested_price_adjustment_pct") @db.Decimal(5, 2)
+
+  venue Venue @relation(fields: [venueId], references: [id], onDelete: Cascade)
+
+  @@map("venue_capacity")
+}
+
+// ============================================================
+// AI USAGE LOG — tracks all AI API calls
+// ============================================================
+model AiUsageLog {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId      String?  @map("venue_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  provider     String
+  taskType     String   @map("task_type")
+  inputTokens  Int?     @map("input_tokens")
+  outputTokens Int?     @map("output_tokens")
+  costCents    Int?     @map("cost_cents")
+  latencyMs    Int?     @map("latency_ms")
+  success      Boolean  @default(true)
+  fallbackUsed Boolean  @default(false) @map("fallback_used")
+
+  venue Venue? @relation(fields: [venueId], references: [id], onDelete: Cascade)
+
+  @@map("ai_usage_log")
+}
+
+// ============================================================
+// DATA ACCESS LOG — audit trail for data access
+// ============================================================
+model DataAccessLog {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId      String   @map("venue_id") @db.Uuid
+  accessedAt   DateTime @map("accessed_at") @db.Timestamptz(6)
+  userId       String   @map("user_id") @db.Uuid
+  userRole     String   @map("user_role")
+  resourceType String   @map("resource_type")
+  resourceId   String   @map("resource_id") @db.Uuid
+  action       String
+  ipAddress    String?  @map("ip_address")
+
+  venue Venue @relation(fields: [venueId], references: [id], onDelete: Cascade)
+
+  @@map("data_access_log")
+}
+
+// ============================================================
+// WEEKLY INSIGHTS — AI-generated weekly summaries
+// ============================================================
+model WeeklyInsight {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId     String   @map("venue_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  insights    Json
+  generatedBy String?  @map("generated_by")
+
+  venue Venue @relation(fields: [venueId], references: [id], onDelete: Cascade)
+
+  @@map("weekly_insights")
+}
+
+// ============================================================
+// CUSTOMER HEALTH — SaaS customer health metrics
+// ============================================================
+model CustomerHealth {
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId               String    @map("venue_id") @db.Uuid
+  calculatedAt          DateTime  @map("calculated_at") @db.Timestamptz(6)
+  lastLoginAt           DateTime? @map("last_login_at") @db.Timestamptz(6)
+  loginsLast30Days      Int?      @map("logins_last_30_days")
+  featuresUsedLast30    String[]  @map("features_used_last_30")
+  inquiriesLast30       Int?      @map("inquiries_last_30")
+  insightsGenerated     Int?      @map("insights_generated")
+  sageEmailsSent        Int?      @map("sage_emails_sent")
+  churnRisk             String?   @map("churn_risk")
+  riskFactors           Json?     @map("risk_factors")
+  lastOutreachAt        DateTime? @map("last_outreach_at") @db.Timestamptz(6)
+  outreachNotes         String?   @map("outreach_notes")
+
+  venue Venue @relation(fields: [venueId], references: [id], onDelete: Cascade)
+
+  @@map("customer_health")
+}
+
+// ============================================================
+// CONTENT TOUCHPOINTS — content interaction tracking
+// ============================================================
+model ContentTouchpoint {
+  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId                 String    @map("venue_id") @db.Uuid
+  clientId                String?   @map("client_id") @db.Uuid
+  contentType             String    @map("content_type")
+  contentId               String?   @map("content_id")
+  contentTitle            String?   @map("content_title")
+  touchpointDate          DateTime? @map("touchpoint_date") @db.Timestamptz(6)
+  interactionType         String?   @map("interaction_type")
+  inBookingJourney        Boolean   @default(false) @map("in_booking_journey")
+  revenueAttributedCents  Int?      @map("revenue_attributed_cents")
+
+  venue  Venue   @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  client Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  @@map("content_touchpoints")
+}
+
+// ============================================================
+// EMAIL THREADS — Gmail thread tracking
+// ============================================================
+model EmailThread {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId         String    @map("venue_id") @db.Uuid
+  clientId        String?   @map("client_id") @db.Uuid
+  gmailThreadId   String    @map("gmail_thread_id")
+  subject         String?
+  firstMessageAt  DateTime? @map("first_message_at") @db.Timestamptz(6)
+  lastMessageAt   DateTime? @map("last_message_at") @db.Timestamptz(6)
+  messageCount    Int       @default(0) @map("message_count")
+  direction       String?
+  isInquiry       Boolean   @default(false) @map("is_inquiry")
+  isSageHandled   Boolean   @default(false) @map("is_sage_handled")
+
+  venue    Venue          @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  client   Client?        @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  messages EmailMessage[]
+
+  @@unique([venueId, gmailThreadId])
+  @@map("email_threads")
+}
+
+// ============================================================
+// EMAIL MESSAGES — individual email messages
+// ============================================================
+model EmailMessage {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId           String    @map("venue_id") @db.Uuid
+  threadId          String    @map("thread_id") @db.Uuid
+  gmailMessageId    String    @map("gmail_message_id")
+  direction         String
+  fromAddress       String?   @map("from_address")
+  toAddress         String?   @map("to_address")
+  sentAt            DateTime? @map("sent_at") @db.Timestamptz(6)
+  subject           String?
+  bodyPreview       String?   @map("body_preview")
+  extractedName     String?   @map("extracted_name")
+  extractedEventDate DateTime? @map("extracted_event_date") @db.Date
+  extractedSignals  Json?     @map("extracted_signals")
+
+  venue  Venue       @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  thread EmailThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+
+  @@unique([venueId, gmailMessageId])
+  @@map("email_messages")
+}
+
+// ============================================================
+// WEBSITE SESSIONS — individual visitor sessions
+// ============================================================
+model WebsiteSession {
+  id                     String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId                String    @map("venue_id") @db.Uuid
+  sessionId              String?   @map("session_id")
+  sessionDate            DateTime? @map("session_date") @db.Date
+  source                 String?
+  medium                 String?
+  campaign               String?
+  landingPage            String?   @map("landing_page")
+  pagesViewed            String[]  @map("pages_viewed")
+  pageCount              Int?      @map("page_count")
+  sessionDurationSeconds Int?      @map("session_duration_seconds")
+  isReturnVisitor        Boolean   @default(false) @map("is_return_visitor")
+  visitNumber            Int?      @map("visit_number")
+  converted              Boolean   @default(false)
+  linkedInquiryId        String?   @map("linked_inquiry_id") @db.Uuid
+  linkedClientId         String?   @map("linked_client_id") @db.Uuid
+
+  venue        Venue   @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  linkedClient Client? @relation("WebsiteSessionClient", fields: [linkedClientId], references: [id], onDelete: SetNull)
+
+  @@map("website_sessions")
+}
+
+// ============================================================
+// VENDOR AVAILABILITY — per-date vendor availability
+// ============================================================
+model VendorAvailability {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  vendorId  String   @map("vendor_id") @db.Uuid
+  venueId   String   @map("venue_id") @db.Uuid
+  date      DateTime @db.Date
+  available Boolean  @default(true)
+
+  vendor Vendor @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  venue  Venue  @relation(fields: [venueId], references: [id], onDelete: Cascade)
+
+  @@unique([vendorId, date])
+  @@map("vendor_availability")
 }

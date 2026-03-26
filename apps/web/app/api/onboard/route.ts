@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
     .eq("user_id", user.id)
     .single();
 
-  if (!venueUser || venueUser.role !== "owner") {
+  if (!venueUser || !["venue_owner", "venue_admin"].includes(venueUser.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

@@ -2,7 +2,7 @@
 
 import { trpc } from "@/lib/trpc/client";
 import { useState, useEffect } from "react";
-import { Mail, Check, AlertCircle, Loader2, Link2, X, CloudDownload, Upload, Plus, Trash2 } from "lucide-react";
+import { Mail, Check, AlertCircle, Loader2, X, CloudDownload, Upload, Plus, Trash2, ChevronDown, ChevronUp, HelpCircle } from "lucide-react";
 import { getPaidChannels, TOUCHPOINTS } from "@/lib/touchpoints";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
@@ -64,9 +64,11 @@ function TagPills({ values }: { values: string[] | null | undefined }) {
 }
 
 export default function SettingsPage() {
-  const { data: venue, refetch } = trpc.venues.getCurrent.useQuery();
+  const { data: venue, refetch, isLoading: venueLoading, isError: venueError } = trpc.venues.getCurrent.useQuery();
+  const { data: computedProfile } = trpc.venues.getComputedProfile.useQuery();
   const { data: emailConn, refetch: refetchEmail } = trpc.email.getConnection.useQuery();
   const update = trpc.venues.update.useMutation({ onSuccess: () => refetch() });
+  const deleteSeedData = trpc.venues.deleteSeedData.useMutation();
   const disconnect = trpc.email.disconnect.useMutation({ onSuccess: () => refetchEmail() });
   const scan = trpc.email.scan.useMutation();
   const syncTours = trpc.calendly.syncTours.useMutation();
@@ -91,6 +93,8 @@ export default function SettingsPage() {
   const [trafficUploading, setTrafficUploading] = useState(false);
   const [trafficResult, setTrafficResult] = useState<{ upserted: number; skipped: number } | null>(null);
   const [trafficError, setTrafficError] = useState<string | null>(null);
+
+  const [showAllSpend, setShowAllSpend] = useState(false);
 
   // ── Channel spend ──────────────────────────────────────────────────────────
   const [showSpendForm, setShowSpendForm] = useState(false);
@@ -119,7 +123,9 @@ export default function SettingsPage() {
   const [form, setForm] = useState({
     googlePlaceId: "",
     knotVenueId: "",
+    calendlyApiKey: "",
     competitorRadiusMiles: 30,
+    maxEventsPerMonth: 4,
     contributesToBenchmark: true,
     googleTrendsMetro: "",
     noaaStationId: "",
@@ -136,7 +142,9 @@ export default function SettingsPage() {
     setForm({
       googlePlaceId: v.google_place_id ?? "",
       knotVenueId: v.knot_venue_id ?? "",
+      calendlyApiKey: v.calendly_api_key ?? "",
       competitorRadiusMiles: v.competitor_radius_miles ?? 30,
+      maxEventsPerMonth: v.max_events_per_month ?? 4,
       contributesToBenchmark: v.contributes_to_benchmark ?? true,
       googleTrendsMetro: v.google_trends_metro ?? "",
       noaaStationId: v.noaa_station_id ?? "",
@@ -156,12 +164,14 @@ export default function SettingsPage() {
     update.mutate({
       googlePlaceId: form.googlePlaceId || undefined,
       knotVenueId: form.knotVenueId || undefined,
-      competitorRadiusMiles: form.competitorRadiusMiles,
+      calendlyApiKey: form.calendlyApiKey || undefined,
       contributesToBenchmark: form.contributesToBenchmark,
       googleTrendsMetro: form.googleTrendsMetro || undefined,
       noaaStationId: form.noaaStationId || undefined,
       fedDistrict: form.fedDistrict ? parseInt(form.fedDistrict) : undefined,
-      trendsCustomTerms: form.trendsCustomTerms.filter(t => t.trim() !== ""),
+      trendsCustomTerms: form.trendsCustomTerms,
+      competitorRadiusMiles: form.competitorRadiusMiles,
+      maxEventsPerMonth: form.maxEventsPerMonth,
     });
     setSaved(true);
     setTimeout(() => setSaved(false), 3000);
@@ -273,14 +283,11 @@ export default function SettingsPage() {
     }
   }
 
-  if (!venue) return <div className="text-sm text-gray-400 p-8">Loading...</div>;
+  if (venueLoading) return <div className="text-sm text-gray-400 p-8">Loading settings…</div>;
+  if (venueError || !venue) return <div className="text-sm text-red-500 p-8">Failed to load venue. Try signing out and back in.</div>;
 
   const connectGmailUrl = `/api/auth/google?venue_id=${venue.id}`;
   const emailError = searchParams.get("email_error") === "1";
-
-  // Intelligence profile helpers
-  const venueProfile = (venue as any).venue_profile ?? {};
-  const funnelConfig = (venue as any).funnel_config ?? {};
 
   // ── Channel spend helpers ──────────────────────────────────────────────────
   const paidChannels = getPaidChannels();
@@ -319,24 +326,12 @@ export default function SettingsPage() {
     // channel_spend table expects YYYY-MM-01 format
     const monthDate = spendForm.month + "-01";
     await upsertChannelSpend.mutateAsync({
-      channel:     spendForm.channel,
-      month:       monthDate,
+      channel:      spendForm.channel,
+      month:        monthDate,
       amountCents,
-      billingType: spendForm.billingType,
-      notes:       spendForm.notes || undefined,
+      billingType:  spendForm.billingType,
+      notes:        spendForm.notes || undefined,
     });
-  }
-
-  function profileValue(key: string): string | null {
-    const field = venueProfile[key];
-    if (!field) return null;
-    return field.value ?? null;
-  }
-
-  function profileSource(key: string): string | null {
-    const field = venueProfile[key];
-    if (!field) return null;
-    return field.source ?? null;
   }
 
   return (
@@ -389,71 +384,79 @@ export default function SettingsPage() {
         <div className="mb-4">
           <h2 className="text-base font-semibold text-gray-900">Intelligence profile</h2>
           <p className="text-xs text-gray-400 mt-0.5">
-            What Bloom knows about your venue economics and funnel. Badges show where each value came from.
+            Calculated automatically from your client records and spend data. Updates as you add more data.
           </p>
         </div>
 
-        {/* Economics fields */}
-        <div className="mb-4">
-          <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Economics</p>
-          <div className="space-y-0">
-            <ProfileRow
-              label="Average package value"
-              value={profileValue("avg_package_value_bucket")}
-              source={profileSource("avg_package_value_bucket")}
-            />
-            <ProfileRow
-              label="Monthly advertising spend"
-              value={profileValue("monthly_ad_spend_bucket")}
-              source={profileSource("monthly_ad_spend_bucket")}
-            />
-            <ProfileRow
-              label="Tours until one booking"
-              value={profileValue("typical_tours_per_booking_bucket")}
-              source={profileSource("typical_tours_per_booking_bucket")}
-            />
-          </div>
-        </div>
-
-        {/* Funnel config fields */}
-        <div className="mb-4">
-          <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Funnel configuration</p>
-          <div className="space-y-3 py-2">
-            <div className="flex items-start justify-between gap-4">
-              <span className="text-sm text-gray-500 flex-shrink-0 w-52 pt-0.5">Where couples find you</span>
-              <div className="flex-1">
-                <TagPills values={funnelConfig.awareness_channels} />
+        {computedProfile ? (
+          <>
+            <div className="mb-4">
+              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Economics</p>
+              <div className="space-y-0">
+                <ProfileRow
+                  label="Average package value"
+                  value={computedProfile.avgPackageCents
+                    ? `$${Math.round(computedProfile.avgPackageCents / 100).toLocaleString()} avg (${computedProfile.bookedClientCount} bookings)`
+                    : null}
+                  source={computedProfile.bookedClientCount > 0 ? "calculated" : null}
+                />
+                <ProfileRow
+                  label="Last month ad spend"
+                  value={computedProfile.lastMonthSpendCents > 0
+                    ? `$${Math.round(computedProfile.lastMonthSpendCents / 100).toLocaleString()} in ${computedProfile.lastMonthLabel}`
+                    : null}
+                  source={computedProfile.lastMonthSpendCents > 0 ? "calculated" : null}
+                />
+                <ProfileRow
+                  label="Tours per booking"
+                  value={computedProfile.toursPerBooking !== null
+                    ? `${computedProfile.toursPerBooking} tours (${computedProfile.touredCount} toured → ${computedProfile.contractedCount} booked)`
+                    : null}
+                  source={computedProfile.contractedCount > 0 ? "calculated" : null}
+                />
               </div>
             </div>
-            <div className="flex items-start justify-between gap-4">
-              <span className="text-sm text-gray-500 flex-shrink-0 w-52 pt-0.5">How they first reach out</span>
-              <div className="flex-1">
-                <TagPills values={funnelConfig.first_touch_methods} />
+
+            <div className="mb-2">
+              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Funnel</p>
+              <div className="space-y-3 py-2">
+                <div className="flex items-start justify-between gap-4">
+                  <span className="text-sm text-gray-500 flex-shrink-0 w-52 pt-0.5">Top inquiry channels</span>
+                  <div className="flex-1">
+                    <TagPills values={computedProfile.topInquiryChannels.length > 0 ? computedProfile.topInquiryChannels : null} />
+                  </div>
+                  {computedProfile.topInquiryChannels.length > 0 && (
+                    <span className="text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0 bg-green-100 text-green-700">Calculated</span>
+                  )}
+                </div>
+                <div className="flex items-start justify-between gap-4">
+                  <span className="text-sm text-gray-500 flex-shrink-0 w-52 pt-0.5">Top lead sources</span>
+                  <div className="flex-1">
+                    <TagPills values={computedProfile.topLeadSources.length > 0 ? computedProfile.topLeadSources : null} />
+                  </div>
+                  {computedProfile.topLeadSources.length > 0 && (
+                    <span className="text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0 bg-green-100 text-green-700">Calculated</span>
+                  )}
+                </div>
               </div>
             </div>
-            <div className="flex items-center justify-between gap-4">
-              <span className="text-sm text-gray-500 flex-shrink-0 w-52">Tour scheduling</span>
-              <span className={`text-sm font-medium flex-1 ${funnelConfig.tour_method ? "text-gray-900" : "text-gray-300"}`}>
-                {funnelConfig.tour_method ?? "Not set"}
-              </span>
-            </div>
-            <div className="flex items-center justify-between gap-4">
-              <span className="text-sm text-gray-500 flex-shrink-0 w-52">Contract tool</span>
-              <span className={`text-sm font-medium flex-1 ${funnelConfig.contract_method ? "text-gray-900" : "text-gray-300"}`}>
-                {funnelConfig.contract_method ?? "Not set"}
-              </span>
-            </div>
-          </div>
-        </div>
 
-        <div className="pt-2 border-t border-gray-100">
-          <a
-            href="/dashboard"
-            className="text-sm text-blue-600 hover:text-blue-800 transition-colors"
-          >
-            Update these in your setup checklist on the dashboard →
-          </a>
-        </div>
+            {!computedProfile.hasData && (
+              <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+                No client data yet — import clients to start seeing calculated values here.
+              </p>
+            )}
+          </>
+        ) : (
+          <div className="space-y-2">
+            {["Average package value", "Last month ad spend", "Tours per booking"].map((l) => (
+              <div key={l} className="flex items-center justify-between py-2 border-b border-gray-100">
+                <span className="text-sm text-gray-400">{l}</span>
+                <div className="h-3 w-24 bg-gray-100 rounded animate-pulse" />
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* ── ADVERTISING SPEND ── */}
@@ -557,51 +560,94 @@ export default function SettingsPage() {
           </div>
         )}
 
-        {channelSpend && channelSpend.length > 0 ? (
-          <div className="overflow-x-auto rounded-lg border border-gray-200">
-            <table className="text-xs w-full">
-              <thead className="bg-gray-50 border-b border-gray-200">
-                <tr>
-                  <th className="text-left px-3 py-2 font-medium text-gray-500">Channel</th>
-                  <th className="text-left px-3 py-2 font-medium text-gray-500">Month</th>
-                  <th className="text-right px-3 py-2 font-medium text-gray-500">Amount</th>
-                  <th className="text-left px-3 py-2 font-medium text-gray-500">Type</th>
-                  <th className="px-3 py-2" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {channelSpend.map((row: any) => (
-                  <tr key={row.id} className="hover:bg-gray-50">
-                    <td className="px-3 py-2 text-gray-900 font-medium">{channelLabel(row.channel)}</td>
-                    <td className="px-3 py-2 text-gray-600">{fmtMonth((row.month ?? "").substring(0, 7))}</td>
-                    <td className="px-3 py-2 text-gray-900 text-right font-medium">{fmtDollars(row.amount_cents)}</td>
-                    <td className="px-3 py-2 text-gray-400">{row.billing_type ? BILLING_LABELS[row.billing_type] : "—"}</td>
-                    <td className="px-3 py-2 text-right">
-                      <button
-                        onClick={() => deleteChannelSpend.mutate({ id: row.id })}
-                        className="text-gray-300 hover:text-red-500 transition-colors"
-                        title="Delete"
-                      >
-                        <Trash2 size={13} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
+        {channelSpend && channelSpend.length > 0 ? (() => {
+          // Show last month's rows by default; expand to show all
+          const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+          const prevMonth = `${now.getFullYear()}-${String(now.getMonth()).padStart(2, "0")}`;
+          // Find the most recent month that has data
+          const sortedMonths = [...new Set((channelSpend as any[]).map((r: any) => (r.month ?? "").substring(0, 7)))].sort().reverse();
+          const latestMonth = sortedMonths[0] ?? "";
+          const displayedRows = showAllSpend
+            ? (channelSpend as any[])
+            : (channelSpend as any[]).filter((r: any) => (r.month ?? "").substring(0, 7) === latestMonth);
+
+          const latestTotal = (channelSpend as any[])
+            .filter((r: any) => (r.month ?? "").substring(0, 7) === latestMonth)
+            .reduce((s: number, r: any) => s + (r.amount_cents ?? 0), 0);
+
+          return (
+            <>
+              {/* Last month summary line */}
+              {!showAllSpend && (
+                <div className="flex items-center justify-between text-sm bg-gray-50 border border-gray-200 rounded-lg px-4 py-3">
+                  <div>
+                    <span className="font-medium text-gray-900">{fmtDollars(latestTotal)}</span>
+                    <span className="text-gray-500 ml-1.5">in {latestMonth ? fmtMonth(latestMonth) : "—"}</span>
+                  </div>
+                  <button
+                    onClick={() => setShowAllSpend(true)}
+                    className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800"
+                  >
+                    <ChevronDown size={13} />
+                    View all history
+                  </button>
+                </div>
+              )}
+
+              {showAllSpend && (
+                <>
+                  <div className="flex items-center justify-between mb-1">
+                    <p className="text-xs text-gray-500">
+                      Total last 12 months: <span className="font-semibold text-gray-900">{fmtDollars(last12Total)}</span>
+                    </p>
+                    <button
+                      onClick={() => setShowAllSpend(false)}
+                      className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600"
+                    >
+                      <ChevronUp size={13} />
+                      Collapse
+                    </button>
+                  </div>
+                  <div className="overflow-x-auto rounded-lg border border-gray-200">
+                    <table className="text-xs w-full">
+                      <thead className="bg-gray-50 border-b border-gray-200">
+                        <tr>
+                          <th className="text-left px-3 py-2 font-medium text-gray-500">Channel</th>
+                          <th className="text-left px-3 py-2 font-medium text-gray-500">Month</th>
+                          <th className="text-right px-3 py-2 font-medium text-gray-500">Amount</th>
+                          <th className="text-left px-3 py-2 font-medium text-gray-500">Type</th>
+                          <th className="px-3 py-2" />
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {(channelSpend as any[]).map((row: any) => (
+                          <tr key={row.id} className="hover:bg-gray-50">
+                            <td className="px-3 py-2 text-gray-900 font-medium">{channelLabel(row.channel)}</td>
+                            <td className="px-3 py-2 text-gray-600">{fmtMonth((row.month ?? "").substring(0, 7))}</td>
+                            <td className="px-3 py-2 text-gray-900 text-right font-medium">{fmtDollars(row.amount_cents)}</td>
+                            <td className="px-3 py-2 text-gray-400">{row.billing_type ? BILLING_LABELS[row.billing_type] : "—"}</td>
+                            <td className="px-3 py-2 text-right">
+                              <button
+                                onClick={() => deleteChannelSpend.mutate({ id: row.id })}
+                                className="text-gray-300 hover:text-red-500 transition-colors"
+                                title="Delete"
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+            </>
+          );
+        })() : (
           !showSpendForm && (
             <p className="text-sm text-gray-400">No spend tracked yet. Click "Add spend" to get started.</p>
           )
-        )}
-
-        {channelSpend && channelSpend.length > 0 && (
-          <p className="text-xs text-gray-500">
-            Total tracked spend:{" "}
-            <span className="font-semibold text-gray-900">{fmtDollars(last12Total)}</span>{" "}
-            (last 12 months)
-          </p>
         )}
       </div>
 
@@ -800,21 +846,15 @@ export default function SettingsPage() {
         </div>
 
         {/* Calendly connection */}
-        <div className="rounded-lg bg-gray-50 border border-gray-200 px-4 py-3 flex items-center justify-between gap-4">
-          <div>
-            <p className="text-sm font-medium text-gray-700">Calendly</p>
-            <p className="text-xs text-gray-400 mt-0.5">
-              {checklistStatus?.calendlyConnected
-                ? "Connected — tour bookings sync automatically when you run a sync from here."
-                : "Not connected. Tour conversion rates won't be tracked."}
-            </p>
-          </div>
-          {checklistStatus?.calendlyConnected ? (
+        <div className="rounded-lg bg-gray-50 border border-gray-200 px-4 py-3 space-y-3">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium text-gray-700">Calendly</p>
+              <p className="text-xs text-gray-400 mt-0.5">
+                Tour bookings sync automatically when you run a sync from here.
+              </p>
+            </div>
             <div className="flex items-center gap-3 flex-shrink-0">
-              <span className="flex items-center gap-1.5 text-xs text-green-700 font-medium">
-                <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
-                Connected
-              </span>
               <button
                 onClick={handleSyncTours}
                 disabled={syncTours.isPending}
@@ -827,39 +867,80 @@ export default function SettingsPage() {
                 )}
               </button>
             </div>
-          ) : (
-            <a href="/dashboard" className="flex-shrink-0 text-sm text-blue-600 hover:text-blue-800 font-medium whitespace-nowrap">
-              Connect in setup →
-            </a>
-          )}
+          </div>
           {syncToursResult && (
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-xs text-gray-500">
               Synced: <span className="font-medium text-green-700">{syncToursResult.synced} new</span>, {syncToursResult.alreadyExisted} already imported{syncToursResult.errors.length > 0 ? `, ${syncToursResult.errors.length} errors` : ""}
             </p>
           )}
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Calendly API key</label>
+            <input
+              type="password"
+              placeholder={(venue as any).calendly_api_key ? "••••••••••••" : "ey..."}
+              value={form.calendlyApiKey}
+              onChange={(e) => setForm(f => ({ ...f, calendlyApiKey: e.target.value }))}
+              className="w-full border border-gray-300 rounded px-3 py-2 text-sm bg-white"
+            />
+            <details className="mt-1.5">
+              <summary className="text-xs text-blue-600 cursor-pointer hover:text-blue-800 list-none flex items-center gap-1">
+                <HelpCircle size={11} />
+                How to find your Calendly API key
+              </summary>
+              <ol className="text-xs text-gray-500 mt-1.5 space-y-0.5 list-decimal list-inside ml-1">
+                <li>Go to <span className="font-medium">calendly.com</span> → click your avatar → Integrations</li>
+                <li>Scroll to "API & Webhooks" → click <span className="font-medium">Get a token</span></li>
+                <li>Copy the Personal Access Token (starts with "ey...")</li>
+                <li>Paste it here and click Save settings</li>
+              </ol>
+            </details>
+          </div>
         </div>
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Google Place ID</label>
           <input
             type="text"
-            placeholder={(venue as any).google_place_id ?? "e.g. ChIJ..."}
+            placeholder={(venue as any).google_place_id ?? "e.g. ChIJN1t_tDeuEmsRUsoyG83frY4"}
             value={form.googlePlaceId}
             onChange={(e) => setForm(f => ({ ...f, googlePlaceId: e.target.value }))}
             className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
           />
-          <p className="text-xs text-gray-400 mt-1">Used for review monitoring and competitor scanning</p>
+          <details className="mt-1.5">
+            <summary className="text-xs text-blue-600 cursor-pointer hover:text-blue-800 list-none flex items-center gap-1">
+              <HelpCircle size={11} />
+              How to find your Google Place ID
+            </summary>
+            <ol className="text-xs text-gray-500 mt-1.5 space-y-0.5 list-decimal list-inside ml-1">
+              <li>Go to <span className="font-medium">developers.google.com/maps/documentation/places/web-service/place-id</span></li>
+              <li>Type your venue name in the "Find a Place ID" search box</li>
+              <li>Select your venue from the results</li>
+              <li>Copy the Place ID (starts with "ChIJ...")</li>
+            </ol>
+            <p className="text-xs text-gray-400 mt-1">Used for Google review monitoring and local competitor scanning.</p>
+          </details>
         </div>
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">The Knot venue ID</label>
           <input
             type="text"
-            placeholder={(venue as any).knot_venue_id ?? "Your Knot venue slug"}
+            placeholder={(venue as any).knot_venue_id ?? "e.g. rixey-manor-virginia"}
             value={form.knotVenueId}
             onChange={(e) => setForm(f => ({ ...f, knotVenueId: e.target.value }))}
             className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
           />
+          <details className="mt-1.5">
+            <summary className="text-xs text-blue-600 cursor-pointer hover:text-blue-800 list-none flex items-center gap-1">
+              <HelpCircle size={11} />
+              How to find your The Knot venue ID
+            </summary>
+            <ol className="text-xs text-gray-500 mt-1.5 space-y-0.5 list-decimal list-inside ml-1">
+              <li>Go to your venue's listing on <span className="font-medium">theknot.com</span></li>
+              <li>Look at the URL — e.g. <span className="font-medium">theknot.com/marketplace/rixey-manor-sperryvile-va-2140285</span></li>
+              <li>Copy the slug after "/marketplace/" (everything after the last slash)</li>
+            </ol>
+          </details>
         </div>
 
       </div>
@@ -1238,6 +1319,22 @@ export default function SettingsPage() {
         <h2 className="text-base font-semibold text-gray-900">Intelligence settings</h2>
 
         <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Max events per month</label>
+          <input
+            type="number"
+            min={1} max={100}
+            value={form.maxEventsPerMonth}
+            onChange={(e) => setForm(f => ({ ...f, maxEventsPerMonth: parseInt(e.target.value) || 1 }))}
+            className="w-24 border border-gray-300 rounded px-3 py-2 text-sm"
+          />
+          <p className="text-xs text-gray-400 mt-1">
+            How many weddings you can host per month. Used in Capacity & Yield to calculate occupancy %.
+            If this is set to 4 and you have 7 bookings in September, you'll show 175% — which means you're overbooked.
+            Set this to your real limit so the numbers make sense.
+          </p>
+        </div>
+
+        <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Competitor scan radius (miles)</label>
           <input
             type="number"
@@ -1274,6 +1371,89 @@ export default function SettingsPage() {
           Save settings
         </button>
         {saved && <span className="text-sm text-green-600">Saved</span>}
+      </div>
+
+      {/* ── TEAM ── */}
+      <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-base font-semibold text-gray-900">Team</h2>
+            <p className="text-xs text-gray-400 mt-0.5">Manage who has access to this venue&apos;s data.</p>
+          </div>
+          <Link
+            href="/settings"
+            onClick={(e) => {
+              e.preventDefault();
+              const email = window.prompt("Enter their email address:");
+              if (email) {
+                const role = window.prompt("Role? (venue_admin, coordinator, readonly)", "coordinator");
+                if (role) {
+                  trpc.useUtils().invalidate();
+                  fetch("/api/invite/accept", { method: "POST" }); // placeholder
+                }
+              }
+            }}
+            className="flex items-center gap-1.5 border border-gray-300 bg-white text-gray-700 px-3 py-1.5 rounded text-sm font-medium hover:bg-gray-50 transition-colors"
+          >
+            <Plus size={14} /> Invite
+          </Link>
+        </div>
+        <p className="text-sm text-gray-400">
+          Team management is available in{" "}
+          <span className="text-gray-600 font-medium">Settings → Team</span> for venue owners.
+          Use the invite button to add coordinators.
+        </p>
+      </div>
+
+      {/* ── DATA EXPORT ── */}
+      <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-base font-semibold text-gray-900">Data export</h2>
+            <p className="text-xs text-gray-400 mt-0.5">
+              Download all your venue data as JSON. Always available — no lock-in.
+            </p>
+          </div>
+          <a
+            href="/api/export"
+            download
+            className="flex items-center gap-1.5 border border-gray-300 bg-white text-gray-700 px-3 py-1.5 rounded text-sm font-medium hover:bg-gray-50 transition-colors"
+          >
+            <CloudDownload size={14} /> Export all data
+          </a>
+        </div>
+      </div>
+
+      {/* Danger Zone */}
+      <div className="rounded-lg border border-red-200 p-6 space-y-4">
+        <h2 className="text-base font-semibold text-red-700">Danger Zone</h2>
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm font-medium text-gray-700">Delete all seed data</p>
+            <p className="text-xs text-gray-400 mt-0.5">
+              Permanently removes all seeded clients and associated records (tours, reviews, channel spend, lost deals) for this venue.
+              This cannot be undone.
+            </p>
+            {deleteSeedData.isSuccess && (
+              <p className="text-xs text-green-600 mt-1">Seed data deleted.</p>
+            )}
+          </div>
+          <button
+            onClick={() => {
+              if (window.confirm("This will permanently delete all 430 seed records. Continue?")) {
+                deleteSeedData.mutate();
+              }
+            }}
+            disabled={deleteSeedData.isPending}
+            className="flex-shrink-0 flex items-center gap-1.5 border border-red-300 bg-white text-red-600 px-3 py-1.5 rounded text-sm font-medium hover:bg-red-50 transition-colors disabled:opacity-50"
+          >
+            {deleteSeedData.isPending ? (
+              <><Loader2 size={13} className="animate-spin" /> Deleting…</>
+            ) : (
+              "Delete all seed data"
+            )}
+          </button>
+        </div>
       </div>
     </div>
   );

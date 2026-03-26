@@ -2,13 +2,16 @@ import { z } from "zod";
 import { router, venueProcedure } from "@/lib/trpc/server";
 import { TRPCError } from "@trpc/server";
 
+// Matches the `status` column CHECK / trigger logic in 003_functions.sql
 const CLIENT_STATUS = [
   "inquiry",
   "tour_booked",
-  "booked",
-  "planning",
+  "toured",
+  "held",
+  "contracted",
   "event_complete",
   "archived",
+  "lost",
 ] as const;
 
 export const clientsRouter = router({
@@ -25,7 +28,7 @@ export const clientsRouter = router({
       }).optional()
     )
     .query(async ({ ctx, input }) => {
-      let query = ctx.supabase
+      let query = ctx.db
         .from("clients")
         .select("*", { count: "exact" })
         .eq("venue_id", ctx.venueId)
@@ -48,11 +51,11 @@ export const clientsRouter = router({
       return { clients: data ?? [], total: count ?? 0 };
     }),
 
-  // Get single client (full five-layer record)
+  // Get single client with all related records (five-layer profile)
   getById: venueProcedure
     .input(z.object({ id: z.string().uuid() }))
     .query(async ({ ctx, input }) => {
-      const { data: client, error } = await ctx.supabase
+      const { data: client, error } = await ctx.db
         .from("clients")
         .select("*")
         .eq("id", input.id)
@@ -61,32 +64,61 @@ export const clientsRouter = router({
 
       if (error) throw new TRPCError({ code: "NOT_FOUND", message: "Client not found" });
 
+      // Audit log — fire-and-forget
+      ctx.logAccess("client", input.id, "view");
+
       // Layer 2: acquisition — source touchpoints
-      const { data: touchpoints } = await ctx.supabase
+      const { data: touchpoints } = await ctx.db
         .from("client_source_touchpoints")
         .select("*")
         .eq("client_id", input.id)
         .order("touchpoint_date", { ascending: true });
 
       // Layer 3: planning events timeline
-      const { data: planningEvents } = await ctx.supabase
+      const { data: planningEvents } = await ctx.db
         .from("planning_events")
         .select("*")
         .eq("client_id", input.id)
         .order("event_date", { ascending: true });
 
       // Layer 4: vendors
-      const { data: clientVendors } = await ctx.supabase
+      const { data: clientVendors } = await ctx.db
         .from("client_vendors")
         .select("*, vendor:vendors(*)")
         .eq("client_id", input.id);
 
       // Uploads
-      const { data: uploads } = await ctx.supabase
+      const { data: uploads } = await ctx.db
         .from("uploads")
         .select("*")
         .eq("client_id", input.id)
         .order("created_at", { ascending: false });
+
+      // Referrals (given and received)
+      const [{ data: referralsGiven }, { data: referralsReceived }] = await Promise.all([
+        ctx.db
+          .from("referrals")
+          .select("id, referred_client_id, source, converted, referral_noted_at, notes")
+          .eq("referring_client_id", input.id),
+        ctx.db
+          .from("referrals")
+          .select("id, referring_client_id, source, converted, referral_noted_at, notes")
+          .eq("referred_client_id", input.id),
+      ]);
+
+      // Weather forecast for event date (if upcoming)
+      let weatherForecast = null;
+      if (client.event_date) {
+        const { data: forecast } = await ctx.db
+          .from("weather_forecasts")
+          .select("forecast_date, forecast_data, fetched_at")
+          .eq("venue_id", ctx.venueId)
+          .eq("forecast_date", client.event_date)
+          .order("fetched_at", { ascending: false })
+          .limit(1)
+          .single();
+        weatherForecast = forecast;
+      }
 
       return {
         client,
@@ -94,6 +126,9 @@ export const clientsRouter = router({
         planningEvents: planningEvents ?? [],
         vendors: clientVendors?.map((cv) => cv.vendor) ?? [],
         uploads: uploads ?? [],
+        referralsGiven: referralsGiven ?? [],
+        referralsReceived: referralsReceived ?? [],
+        weatherForecast,
       };
     }),
 
@@ -114,10 +149,11 @@ export const clientsRouter = router({
         status: z.enum(CLIENT_STATUS).default("inquiry"),
         selfReportedSource: z.string().optional(),
         firstTouchPlatform: z.string().optional(),
+        inquiryChannel: z.string().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const { data, error } = await ctx.supabase
+      const { data, error } = await ctx.db
         .from("clients")
         .insert({
           venue_id: ctx.venueId,
@@ -135,6 +171,8 @@ export const clientsRouter = router({
           self_reported_source: input.selfReportedSource,
           first_touch_platform: input.firstTouchPlatform,
           first_touch_date: new Date().toISOString(),
+          inquiry_channel: input.inquiryChannel,
+          inquired_at: new Date().toISOString(),
         })
         .select()
         .single();
@@ -143,7 +181,7 @@ export const clientsRouter = router({
       return data;
     }),
 
-  // Upsert client from import — deduplicates by email, then name
+  // Upsert client from CSV import — deduplicates by email, then event_date, then name
   upsertFromImport: venueProcedure
     .input(
       z.object({
@@ -158,7 +196,8 @@ export const clientsRouter = router({
         revenueCents: z.number().int().optional(),
         status: z.enum(CLIENT_STATUS).default("inquiry"),
         selfReportedSource: z.string().optional(),
-        inquiryDate: z.string().optional(),
+        // inquired_at is the correct column name for the inquiry timestamp
+        inquiredAt: z.string().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -166,7 +205,7 @@ export const clientsRouter = router({
       let existingId: string | null = null;
 
       if (input.emailPrimary) {
-        const { data: byEmail } = await ctx.supabase
+        const { data: byEmail } = await ctx.db
           .from("clients")
           .select("id")
           .eq("venue_id", ctx.venueId)
@@ -177,7 +216,7 @@ export const clientsRouter = router({
       }
 
       if (!existingId && input.eventDate) {
-        const { data: byDate } = await ctx.supabase
+        const { data: byDate } = await ctx.db
           .from("clients")
           .select("id")
           .eq("venue_id", ctx.venueId)
@@ -188,7 +227,7 @@ export const clientsRouter = router({
       }
 
       if (!existingId) {
-        const { data: byName } = await ctx.supabase
+        const { data: byName } = await ctx.db
           .from("clients")
           .select("id")
           .eq("venue_id", ctx.venueId)
@@ -211,19 +250,19 @@ export const clientsRouter = router({
         revenue_cents: input.revenueCents,
         status: input.status,
         self_reported_source: input.selfReportedSource,
-        inquiry_date: input.inquiryDate ?? null,
+        inquired_at: input.inquiredAt ?? null,
       };
 
       if (existingId) {
-        await ctx.supabase.from("clients").update(payload).eq("id", existingId);
+        await ctx.db.from("clients").update(payload).eq("id", existingId);
         return { action: "updated" as const };
       } else {
-        await ctx.supabase.from("clients").insert(payload);
+        await ctx.db.from("clients").insert(payload);
         return { action: "created" as const };
       }
     }),
 
-  // Update client
+  // Update client — only maps fields that actually exist in the schema
   update: venueProcedure
     .input(
       z.object({
@@ -241,29 +280,32 @@ export const clientsRouter = router({
         guestCountFinal: z.number().int().optional(),
         revenueCents: z.number().int().optional(),
         status: z.enum(CLIENT_STATUS).optional(),
+        inquiryChannel: z.string().optional(),
+        inquiryIntent: z.string().optional(),
+        selfReportedSource: z.string().optional(),
         resolvedSource: z.string().optional(),
         resolvedSourceConfidence: z.number().int().min(0).max(100).optional(),
+        acquisitionCostCents: z.number().int().optional(),
+        competingVenues: z.array(z.string()).optional(),
         complexityScore: z.number().int().min(0).max(100).optional(),
         dayOfComplexity: z.number().int().min(1).max(5).optional(),
         staffingHoursActual: z.number().int().optional(),
-        reviewLeft: z.boolean().optional(),
+        assignedCoordinator: z.string().optional(),
+        // review_submitted (boolean) is the correct column — not review_left
+        reviewSubmitted: z.boolean().optional(),
         reviewPlatform: z.string().optional(),
         reviewStarRating: z.number().min(1).max(5).optional(),
         reviewText: z.string().optional(),
         referralsGenerated: z.number().int().optional(),
-        holdExpiresAt: z.string().datetime().nullable().optional(),
-        lostReason: z.enum([
-          "too_expensive", "date_taken", "chose_competitor", "no_response",
-          "not_right_fit", "budget_cut", "postponed", "unknown", "other",
-        ]).nullable().optional(),
-        lostReasonNote: z.string().max(500).nullable().optional(),
+        stressFlags: z.record(z.unknown()).nullable().optional(),
+        familyDynamicsFlags: z.record(z.unknown()).nullable().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
       const { id, ...rest } = input;
       const updateData: Record<string, unknown> = {};
 
-      // Map camelCase to snake_case
+      // Map camelCase to snake_case — only columns that exist in the schema
       const fieldMap: Record<string, string> = {
         namePrimary: "name_primary",
         namePartner: "name_partner",
@@ -278,19 +320,24 @@ export const clientsRouter = router({
         guestCountFinal: "guest_count_final",
         revenueCents: "revenue_cents",
         status: "status",
+        inquiryChannel: "inquiry_channel",
+        inquiryIntent: "inquiry_intent",
+        selfReportedSource: "self_reported_source",
         resolvedSource: "resolved_source",
         resolvedSourceConfidence: "resolved_source_confidence",
+        acquisitionCostCents: "acquisition_cost_cents",
+        competingVenues: "competing_venues",
         complexityScore: "complexity_score",
         dayOfComplexity: "day_of_complexity",
         staffingHoursActual: "staffing_hours_actual",
-        reviewLeft: "review_left",
+        assignedCoordinator: "assigned_coordinator",
+        reviewSubmitted: "review_submitted",
         reviewPlatform: "review_platform",
         reviewStarRating: "review_star_rating",
         reviewText: "review_text",
         referralsGenerated: "referrals_generated",
-        holdExpiresAt: "hold_expires_at",
-        lostReason: "lost_reason",
-        lostReasonNote: "lost_reason_note",
+        stressFlags: "stress_flags",
+        familyDynamicsFlags: "family_dynamics_flags",
       };
 
       for (const [key, value] of Object.entries(rest)) {
@@ -299,7 +346,7 @@ export const clientsRouter = router({
         }
       }
 
-      const { data, error } = await ctx.supabase
+      const { data, error } = await ctx.db
         .from("clients")
         .update(updateData)
         .eq("id", id)
@@ -312,11 +359,11 @@ export const clientsRouter = router({
     }),
 
   // Back-fill resolved_source on clients that have no attribution yet,
-  // by matching their email address against email_extractions already in the DB.
+  // by matching their email address against email_messages already in the DB.
   // Run this after a CSV import or manually from Settings.
   backfillSourceAttribution: venueProcedure
     .mutation(async ({ ctx }) => {
-      const { data: clients } = await ctx.supabase
+      const { data: clients } = await ctx.db
         .from("clients")
         .select("id, email_primary, email_partner, self_reported_source")
         .eq("venue_id", ctx.venueId)
@@ -325,56 +372,42 @@ export const clientsRouter = router({
 
       if (!clients || clients.length === 0) return { updated: 0, total: 0 };
 
-      // Map Claude extraction labels → canonical resolved_source values
-      const sourceMap: Record<string, string> = {
-        the_knot: "knot",
-        wedding_wire: "wedding_wire",
-        zola: "zola",
-        instagram: "instagram",
-        facebook: "facebook",
-        google: "google_organic",
-        friend_referral: "referral",
-        direct: "direct",
-        other: "other",
-      };
-
       let updated = 0;
 
       for (const client of clients) {
         const emails = [client.email_primary, client.email_partner].filter(Boolean) as string[];
         if (emails.length === 0) continue;
 
-        const emailFilter = emails.map((e) => `from_email.ilike.${e}`).join(",");
+        // Look up email_threads that can be tied to this client by from_address
+        const emailFilter = emails.map((e) => `from_address.ilike.${e}`).join(",");
 
-        const { data: extractions } = await ctx.supabase
-          .from("email_extractions")
-          .select("id, extracted_source, match_score")
+        const { data: messages } = await ctx.db
+          .from("email_messages")
+          .select("id, extracted_signals, thread_id")
           .eq("venue_id", ctx.venueId)
           .or(emailFilter)
-          .not("extracted_source", "is", null)
-          .order("match_score", { ascending: false })
+          .not("extracted_signals", "is", null)
           .limit(5);
 
-        if (!extractions || extractions.length === 0) continue;
+        if (!messages || messages.length === 0) continue;
 
-        const best = extractions[0];
-        const resolvedSource = sourceMap[best.extracted_source] ?? best.extracted_source;
+        // Pull the first message that has a self_reported_source signal
+        const best = messages.find(
+          (m) => (m.extracted_signals as Record<string, unknown>)?.self_reported_source
+        );
+        if (!best) continue;
 
-        await ctx.supabase
+        const signals = best.extracted_signals as Record<string, unknown>;
+        const extractedSource = signals.self_reported_source as string;
+
+        await ctx.db
           .from("clients")
           .update({
-            self_reported_source: client.self_reported_source ?? best.extracted_source,
-            resolved_source: resolvedSource,
+            self_reported_source: client.self_reported_source ?? extractedSource,
+            resolved_source: extractedSource,
             resolved_source_confidence: 72,
           })
           .eq("id", client.id);
-
-        // Link extraction back to this client if not already linked
-        await ctx.supabase
-          .from("email_extractions")
-          .update({ matched_client_id: client.id })
-          .eq("id", best.id)
-          .is("matched_client_id", null);
 
         updated++;
       }
@@ -382,32 +415,40 @@ export const clientsRouter = router({
       return { updated, total: clients.length };
     }),
 
-  // Update social reach — tracks social following / post reach for a past couple.
-  // Useful for identifying "ambassador" clients whose wedding posts drove significant
-  // organic awareness. Set manually by the coordinator after checking.
-  //
-  // social_reach shape (all optional):
-  //   { instagram_followers, instagram_post_url, reach_estimate, notes }
-  updateSocialReach: venueProcedure
-    .input(
-      z.object({
-        clientId: z.string().uuid(),
-        socialReach: z.object({
-          instagram_followers: z.number().int().optional(),
-          instagram_post_url:  z.string().url().optional(),
-          reach_estimate:      z.number().int().optional(),
-          notes:               z.string().max(500).optional(),
-        }),
-      })
-    )
+  // Archive (mark lost) + write reason to lost_deals
+  archiveWithReason: venueProcedure
+    .input(z.object({
+      id:             z.string().uuid(),
+      reasonCategory: z.string().nullable(),
+      reasonDetail:   z.string().optional(),
+      lostAtStage:    z.string().optional(),
+    }))
     .mutation(async ({ ctx, input }) => {
-      const { error } = await ctx.supabase
+      // Get current client status for lost_at_stage fallback
+      const { data: client } = await ctx.db
         .from("clients")
-        .update({ social_reach: input.socialReach })
-        .eq("id", input.clientId)
-        .eq("venue_id", ctx.venueId);
+        .select("status")
+        .eq("id", input.id)
+        .eq("venue_id", ctx.venueId)
+        .single();
 
-      if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
+      await Promise.all([
+        ctx.db
+          .from("clients")
+          .update({ status: "lost" })
+          .eq("id", input.id)
+          .eq("venue_id", ctx.venueId),
+        ctx.db
+          .from("lost_deals")
+          .insert({
+            venue_id:          ctx.venueId,
+            client_id:         input.id,
+            lost_at_stage:     input.lostAtStage ?? (client?.status as string) ?? "unknown",
+            reason_category:   input.reasonCategory,
+            reason_detail:     input.reasonDetail || null,
+          }),
+      ]);
+
       return { success: true };
     }),
 });

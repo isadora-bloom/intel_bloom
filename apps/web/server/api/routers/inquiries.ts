@@ -16,10 +16,29 @@ export const inquiriesRouter = router({
       }).optional()
     )
     .query(async ({ ctx, input }) => {
-      let query = ctx.supabase
+      // Select only columns that exist on the inquiries table per schema 001_schema.sql
+      let query = ctx.db
         .from("inquiries")
         .select(
-          "id, name_extracted, email_extracted, phone_extracted, event_date_extracted, received_at, platform, day_of_week, self_reported_source, session_source_url, resolved_source, resolved_source_confidence, response_time_minutes, match_status, matched_client_id, inquiry_intent, touchpoint_classification, prior_signal_status, days_from_signal_to_inquiry, matched_client:clients(id, name_primary, event_date, status)",
+          `id,
+           name_extracted,
+           email_extracted,
+           phone_extracted,
+           event_date_extracted,
+           received_at,
+           platform,
+           day_of_week,
+           hour_of_day,
+           inquiry_intent,
+           touchpoint_classification,
+           first_contact_channel,
+           days_from_signal_to_inquiry,
+           prior_signal_id,
+           prior_signal_confidence,
+           response_time_minutes,
+           match_status,
+           matched_client_id,
+           matched_client:clients(id, name_primary, event_date, status)`,
           { count: "exact" }
         )
         .eq("venue_id", ctx.venueId)
@@ -41,7 +60,7 @@ export const inquiriesRouter = router({
   getById: venueProcedure
     .input(z.object({ id: z.string().uuid() }))
     .query(async ({ ctx, input }) => {
-      const { data, error } = await ctx.supabase
+      const { data, error } = await ctx.db
         .from("inquiries")
         .select("*")
         .eq("id", input.id)
@@ -52,7 +71,7 @@ export const inquiriesRouter = router({
       return data;
     }),
 
-  // Match inquiry to existing client
+  // Match inquiry to existing client and propagate session data
   matchToClient: venueProcedure
     .input(
       z.object({
@@ -62,15 +81,15 @@ export const inquiriesRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      // Fetch inquiry first so we can propagate session data to the client
-      const { data: inquiry } = await ctx.supabase
+      // Fetch inquiry first so we can propagate session_data to the client
+      const { data: inquiry } = await ctx.db
         .from("inquiries")
-        .select("session_data, session_source_url, self_reported_source, resolved_source, resolved_source_confidence")
+        .select("session_data")
         .eq("id", input.inquiryId)
         .eq("venue_id", ctx.venueId)
         .single();
 
-      const { error } = await ctx.supabase
+      const { error } = await ctx.db
         .from("inquiries")
         .update({
           matched_client_id: input.clientId,
@@ -82,30 +101,18 @@ export const inquiriesRouter = router({
 
       if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
 
-      // Propagate session data to client record (only fill gaps — don't overwrite)
-      if (inquiry) {
-        const { data: client } = await ctx.supabase
+      // Propagate session_data to client record only if client has none yet
+      if (inquiry?.session_data) {
+        const { data: client } = await ctx.db
           .from("clients")
-          .select("session_data, session_source_url, self_reported_source, resolved_source")
+          .select("session_data")
           .eq("id", input.clientId)
           .single();
 
-        const sessionUpdates: Record<string, unknown> = {};
-        if (!client?.session_data && inquiry.session_data)
-          sessionUpdates.session_data = inquiry.session_data;
-        if (!client?.session_source_url && inquiry.session_source_url)
-          sessionUpdates.session_source_url = inquiry.session_source_url;
-        if (!client?.self_reported_source && inquiry.self_reported_source)
-          sessionUpdates.self_reported_source = inquiry.self_reported_source;
-        if (!client?.resolved_source && inquiry.resolved_source) {
-          sessionUpdates.resolved_source = inquiry.resolved_source;
-          sessionUpdates.resolved_source_confidence = inquiry.resolved_source_confidence;
-        }
-
-        if (Object.keys(sessionUpdates).length > 0) {
-          await ctx.supabase
+        if (!client?.session_data) {
+          await ctx.db
             .from("clients")
-            .update(sessionUpdates)
+            .update({ session_data: inquiry.session_data })
             .eq("id", input.clientId)
             .eq("venue_id", ctx.venueId);
         }
@@ -114,11 +121,11 @@ export const inquiriesRouter = router({
       return { success: true };
     }),
 
-  // Create new client from inquiry
+  // Create new client from an inquiry record
   createClientFromInquiry: venueProcedure
     .input(z.object({ inquiryId: z.string().uuid() }))
     .mutation(async ({ ctx, input }) => {
-      const { data: inquiry, error: fetchError } = await ctx.supabase
+      const { data: inquiry, error: fetchError } = await ctx.db
         .from("inquiries")
         .select("*")
         .eq("id", input.inquiryId)
@@ -127,8 +134,8 @@ export const inquiriesRouter = router({
 
       if (fetchError) throw new TRPCError({ code: "NOT_FOUND" });
 
-      // Create client from inquiry data — include session data if present
-      const { data: client, error: createError } = await ctx.supabase
+      // Build client from inquiry fields — only use columns that exist on clients
+      const { data: client, error: createError } = await ctx.db
         .from("clients")
         .insert({
           venue_id: ctx.venueId,
@@ -139,21 +146,21 @@ export const inquiriesRouter = router({
           guest_count_initial: inquiry.guest_count_extracted,
           first_touch_platform: inquiry.platform,
           first_touch_date: inquiry.received_at,
-          status: "inquiry",
-          // Propagate session signals from inquiry
-          self_reported_source: inquiry.self_reported_source ?? null,
-          session_source_url: inquiry.session_source_url ?? null,
+          inquiry_intent: inquiry.inquiry_intent,
+          inquiry_channel: inquiry.first_contact_channel,
+          days_from_signal_to_inquiry: inquiry.days_from_signal_to_inquiry,
+          // Propagate session_data if present on inquiry
           session_data: inquiry.session_data ?? null,
-          resolved_source: inquiry.resolved_source ?? null,
-          resolved_source_confidence: inquiry.resolved_source_confidence ?? null,
+          status: "inquiry",
+          inquired_at: inquiry.received_at ?? new Date().toISOString(),
         })
         .select()
         .single();
 
       if (createError) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: createError.message });
 
-      // Link inquiry to client
-      await ctx.supabase
+      // Link inquiry to new client
+      await ctx.db
         .from("inquiries")
         .update({
           matched_client_id: client.id,
@@ -165,11 +172,11 @@ export const inquiriesRouter = router({
       return client;
     }),
 
-  // Record response time
+  // Record response time for an inquiry
   markResponded: venueProcedure
     .input(z.object({ inquiryId: z.string().uuid() }))
     .mutation(async ({ ctx, input }) => {
-      const { data: inquiry } = await ctx.supabase
+      const { data: inquiry } = await ctx.db
         .from("inquiries")
         .select("received_at")
         .eq("id", input.inquiryId)
@@ -180,7 +187,7 @@ export const inquiriesRouter = router({
         ? Math.round((Date.now() - new Date(inquiry.received_at).getTime()) / 60000)
         : null;
 
-      const { error } = await ctx.supabase
+      const { error } = await ctx.db
         .from("inquiries")
         .update({
           response_sent_at: new Date().toISOString(),
@@ -189,6 +196,31 @@ export const inquiriesRouter = router({
         .eq("id", input.inquiryId)
         .eq("venue_id", ctx.venueId);
 
+      if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
+      return { success: true };
+    }),
+
+  // Unresolved response alerts for this venue
+  getAlerts: venueProcedure.query(async ({ ctx }) => {
+    const { data, error } = await ctx.db
+      .from("response_alerts")
+      .select("*, inquiry:inquiries(name_extracted, email_extracted, received_at)")
+      .eq("venue_id", ctx.venueId)
+      .eq("resolved", false)
+      .order("created_at", { ascending: false })
+      .limit(20);
+    if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
+    return data ?? [];
+  }),
+
+  resolveAlert: venueProcedure
+    .input(z.object({ id: z.string().uuid() }))
+    .mutation(async ({ ctx, input }) => {
+      const { error } = await ctx.db
+        .from("response_alerts")
+        .update({ resolved: true, resolved_at: new Date().toISOString() })
+        .eq("id", input.id)
+        .eq("venue_id", ctx.venueId);
       if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
       return { success: true };
     }),

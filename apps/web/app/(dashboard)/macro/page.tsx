@@ -295,7 +295,7 @@ export default function MacroPage() {
             </table>
           </div>
           <p className="text-xs text-gray-400 mt-3">
-            Last scanned {competitors[0]?.scanned_at ? format(new Date(competitors[0].scanned_at), "MMM d, yyyy") : "never"}
+            Last scanned {(competitors[0] as any)?.scanned_at ? format(new Date((competitors[0] as any).scanned_at), "MMM d, yyyy") : "never"}
           </p>
         </div>
       )}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { trpc } from "@/lib/trpc/client";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -209,15 +210,18 @@ function periodToDateFrom(period: "1m" | "3m" | "6m" | "1y" | "all"): string | u
   return now.toISOString().split("T")[0];
 }
 
+type AnalyticsTab = "pipeline" | "revenue" | "reputation" | "operations";
+
 export default function AnalyticsPage() {
+  const [tab, setTab] = useState<AnalyticsTab>("pipeline");
   const [period, setPeriod] = useState<"1m" | "3m" | "6m" | "1y" | "all">("1y");
   const dateFrom = periodToDateFrom(period);
 
-  const { data: sourceROI }         = trpc.analytics.sourceROI.useQuery({ dateFrom });
-  const { data: revenue }           = trpc.analytics.revenueOverTime.useQuery({ years: 3, dateFrom });
+  const { data: sourceROI, isLoading: sourceLoading }         = trpc.analytics.sourceROI.useQuery({ dateFrom });
+  const { data: revenue, isLoading: revenueLoading }           = trpc.analytics.revenueOverTime.useQuery({ years: 3, dateFrom });
   const { data: timelines }         = trpc.analytics.timelineBenchmarks.useQuery();
-  const { data: funnel }            = trpc.analytics.funnelSeasonality.useQuery({ years: 3 });
-  const { data: pipeline }          = trpc.analytics.stagePipeline.useQuery();
+  const { data: funnel, isLoading: funnelLoading }            = trpc.analytics.funnelSeasonality.useQuery({ years: 3 });
+  const { data: pipeline, isLoading: pipelineLoading }          = trpc.analytics.stagePipeline.useQuery();
   const { data: holdAlerts }        = trpc.analytics.getHoldAlerts.useQuery();
   const { data: lostReasons }       = trpc.analytics.getLostReasons.useQuery();
   const { data: bookingHorizon }    = trpc.analytics.getBookingHorizon.useQuery();
@@ -231,8 +235,8 @@ export default function AnalyticsPage() {
   const hasFunnelData = funnelMonths.some(
     (m) => m.saves > 0 || m.inquiries > 0 || m.tours > 0 || m.events > 0
   );
-  const hasWeatherData = (funnel?.weatherGrid ?? []).some(g =>
-    g.years.some((y: any) => y.rainScore !== null || y.heatScore !== null)
+  const hasWeatherData = (funnel?.weatherGrid ?? []).some((g: any) =>
+    (g.years ?? []).some((y: any) => y.rainScore !== null || y.heatScore !== null)
   );
 
   // Trim capacity outlook to only rows with actual data
@@ -241,25 +245,63 @@ export default function AnalyticsPage() {
   );
 
   return (
-    <div className="max-w-6xl space-y-8">
-      <h1 className="text-2xl font-semibold text-gray-900">Analytics</h1>
-
-      {/* Period selector */}
-      <div className="flex items-center gap-2">
-        {(["1m", "3m", "6m", "1y", "all"] as const).map((p) => (
-          <button
-            key={p}
-            onClick={() => setPeriod(p)}
-            className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
-              period === p
-                ? "bg-gray-900 text-white border-gray-900"
-                : "bg-white text-gray-600 border-gray-200 hover:border-gray-400"
-            }`}
-          >
-            {p === "1m" ? "1 month" : p === "3m" ? "3 months" : p === "6m" ? "6 months" : p === "1y" ? "1 year" : "All time"}
-          </button>
-        ))}
+    <div className="max-w-6xl space-y-6">
+      {/* Header + tabs */}
+      <div>
+        <h1 className="text-2xl font-semibold text-gray-900 mb-4">Analytics</h1>
+        <div className="flex items-center gap-1 border-b border-gray-200">
+          {(["pipeline", "revenue", "reputation", "operations"] as const).map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors capitalize ${
+                tab === t
+                  ? "border-blue-600 text-blue-700"
+                  : "border-transparent text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              {t === "pipeline" ? "Pipeline" : t === "revenue" ? "Revenue" : t === "reputation" ? "Reputation" : "Operations"}
+            </button>
+          ))}
+          {/* Period selector — right-aligned, only show on tabs that use it */}
+          {(tab === "pipeline" || tab === "revenue") && (
+            <div className="ml-auto flex items-center gap-1 pb-2">
+              {(["1m", "3m", "6m", "1y", "all"] as const).map((p) => (
+                <button
+                  key={p}
+                  onClick={() => setPeriod(p)}
+                  className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
+                    period === p
+                      ? "bg-gray-900 text-white border-gray-900"
+                      : "bg-white text-gray-600 border-gray-200 hover:border-gray-400"
+                  }`}
+                >
+                  {p === "1m" ? "1m" : p === "3m" ? "3m" : p === "6m" ? "6m" : p === "1y" ? "1y" : "All"}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
+
+      {/* ═══════ PIPELINE TAB ═══════ */}
+      {tab === "pipeline" && (<>
+
+      {/* Loading skeleton */}
+      {pipelineLoading && (
+        <div className="space-y-4 animate-pulse">
+          <div className="bg-white rounded-lg border border-gray-200 p-6">
+            <div className="h-4 bg-gray-100 rounded w-36 mb-4" />
+            <div className="grid grid-cols-6 gap-3">
+              {[...Array(6)].map((_, i) => <div key={i} className="h-16 bg-gray-50 rounded" />)}
+            </div>
+          </div>
+          <div className="bg-white rounded-lg border border-gray-200 p-6">
+            <div className="h-4 bg-gray-100 rounded w-48 mb-4" />
+            <div className="h-48 bg-gray-50 rounded" />
+          </div>
+        </div>
+      )}
 
       {/* ── FUNNEL PIPELINE (current snapshot) ── */}
       {pipeline && (
@@ -274,8 +316,8 @@ export default function AnalyticsPage() {
             {[
               { label: "Saves & visits", value: pipeline.stageCounts.discovery, color: STAGE_COLORS.saves, desc: "discovered you" },
               { label: "Inquiries", value: pipeline.stageCounts.inquiries, color: STAGE_COLORS.inquiries, desc: "reached out" },
-              { label: "Touring", value: pipeline.stageCounts.touring, color: STAGE_COLORS.tours, desc: "actively touring" },
-              { label: "On hold", value: pipeline.stageCounts.hold, color: "#f97316", desc: "hold placed" },
+              { label: "Touring", value: (pipeline.stageCounts.tourBooked ?? 0) + (pipeline.stageCounts.toured ?? 0), color: STAGE_COLORS.tours, desc: "actively touring" },
+              { label: "On hold", value: pipeline.stageCounts.held, color: "#f97316", desc: "hold placed" },
               { label: "Contracted", value: pipeline.stageCounts.contracted, color: "#22c55e", desc: "signed" },
               { label: "Events held", value: pipeline.stageCounts.completed, color: STAGE_COLORS.events, desc: "complete" },
             ].map((stage, i, arr) => (
@@ -519,6 +561,23 @@ export default function AnalyticsPage() {
         </div>
       )}
 
+      </>)}
+
+      {/* ═══════ REVENUE TAB ═══════ */}
+      {tab === "revenue" && (<>
+
+      {/* Loading skeleton */}
+      {sourceLoading && (
+        <div className="space-y-4 animate-pulse">
+          <div className="bg-white rounded-lg border border-gray-200 p-6">
+            <div className="h-4 bg-gray-100 rounded w-24 mb-4" />
+            <div className="space-y-3">
+              {[...Array(4)].map((_, i) => <div key={i} className="h-8 bg-gray-50 rounded" />)}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── SOURCE ROI ── */}
       <div className="bg-white rounded-lg border border-gray-200 p-6">
         <div className="flex items-baseline justify-between mb-1">
@@ -526,7 +585,7 @@ export default function AnalyticsPage() {
           {period !== "all" && <span className="text-xs text-gray-400">Filtered: last {period === "1m" ? "month" : period === "3m" ? "3 months" : period === "6m" ? "6 months" : "year"}</span>}
         </div>
         <p className="text-xs text-gray-400 mb-4">
-          Where clients came from and how well each source converts and retains.
+          Where clients came from and how well each source converts. Spend figures come from <a href="/settings" className="text-blue-500 hover:underline">Settings → Advertising spend</a> — the channel name there must match the source name here for cost metrics to appear.
         </p>
         {sourceROI && sourceROI.length > 0 ? (
           <div className="overflow-x-auto">
@@ -535,12 +594,13 @@ export default function AnalyticsPage() {
                 <tr>
                   <th className="text-left py-2 pr-4">Source</th>
                   <th className="text-right py-2 pr-4">Inquiries</th>
+                  <th className="text-right py-2 pr-4">Toured</th>
                   <th className="text-right py-2 pr-4">Booked</th>
-                  <th className="text-right py-2 pr-4">Conv. rate</th>
+                  <th className="text-right py-2 pr-4">Book rate</th>
                   <th className="text-right py-2 pr-4">Avg revenue</th>
-                  <th className="text-right py-2 pr-4">Complexity</th>
                   <th className="text-right py-2 pr-4">Review rate</th>
-                  <th className="text-right py-2 pr-4 text-[10px]">Spend</th>
+                  <th className="text-right py-2 pr-4 text-[10px]">Total spend</th>
+                  <th className="text-right py-2 pr-4 text-[10px]">Cost/tour</th>
                   <th className="text-right py-2 pr-4 text-[10px]">Cost/booking</th>
                   <th className="text-right py-2 text-[10px]">Cost/$1 rev</th>
                 </tr>
@@ -549,8 +609,12 @@ export default function AnalyticsPage() {
                 {sourceROI.map((row: any) => (
                   <tr key={row.source} className="hover:bg-gray-50">
                     <td className="py-2.5 pr-4 font-medium text-gray-900">
-                      {row.source}
-                      {/* Intent breakdown sub-line */}
+                      <Link
+                        href={`/analytics/sources?source=${encodeURIComponent(row.source)}`}
+                        className="hover:text-indigo-600 hover:underline"
+                      >
+                        {row.source}
+                      </Link>
                       {(row.blastRate > 0 || (row.chosenConversionRate != null && Math.abs(row.chosenConversionRate - row.conversionRate) >= 5)) && (
                         <div className="flex items-center gap-1.5 mt-0.5">
                           {row.blastRate > 0 && (
@@ -567,27 +631,45 @@ export default function AnalyticsPage() {
                       )}
                     </td>
                     <td className="text-right py-2.5 pr-4 text-gray-600">{row.inquiryCount}</td>
+                    <td className="text-right py-2.5 pr-4 text-gray-600">
+                      {row.touredCount}
+                      {row.touredCount > 0 && row.inquiryCount > 0 && (
+                        <span className="text-[10px] text-gray-400 ml-1">({pct(row.tourRate)})</span>
+                      )}
+                    </td>
                     <td className="text-right py-2.5 pr-4 text-gray-600">{row.bookedCount}</td>
                     <td className="text-right py-2.5 pr-4 text-gray-600">{pct(row.conversionRate)}</td>
                     <td className="text-right py-2.5 pr-4 text-gray-600">
                       {row.avgRevenue ? `$${(row.avgRevenue / 100).toLocaleString()}` : "—"}
                     </td>
-                    <td className="text-right py-2.5 pr-4 text-gray-600">{row.avgComplexityScore ?? "—"}</td>
                     <td className="text-right py-2.5 pr-4 text-gray-600">{pct(row.reviewRate)}</td>
                     <td className="text-right py-2.5 pr-4 text-xs text-gray-500">
                       {row.spendCents > 0
-                        ? `$${(row.spendCents / 100).toLocaleString()}/mo`
-                        : <a href="/settings#spend" className="text-gray-400 hover:text-gray-600 text-[10px]">Add spend →</a>}
+                        ? `$${(row.spendCents / 100).toLocaleString()}`
+                        : <a href="/settings" className="text-gray-400 hover:text-gray-600 text-[10px]">Add spend →</a>}
                     </td>
-                    <td className="text-right py-2.5 pr-4 text-xs text-gray-500">
+                    <td className="text-right py-2.5 pr-4 text-xs">
+                      {row.costPerTour != null
+                        ? <span className="text-gray-700 font-medium">${(row.costPerTour / 100).toLocaleString()}</span>
+                        : <span className="text-gray-300">—</span>}
+                    </td>
+                    <td className="text-right py-2.5 pr-4 text-xs">
                       {row.costPerBooking != null
-                        ? `$${(row.costPerBooking / 100).toLocaleString()}`
-                        : "—"}
+                        ? <span className="text-gray-700 font-medium">${(row.costPerBooking / 100).toLocaleString()}</span>
+                        : <span className="text-gray-300">—</span>}
                     </td>
                     <td className="text-right py-2.5 text-xs text-gray-500">
                       {row.costPerRevenueDollar != null
                         ? `$${(row.costPerRevenueDollar / 100).toFixed(2)}`
                         : "—"}
+                    </td>
+                    <td className="py-2.5 pl-3">
+                      <Link
+                        href={`/analytics/sources?source=${encodeURIComponent(row.source)}`}
+                        className="text-[10px] text-indigo-400 hover:text-indigo-600 whitespace-nowrap"
+                      >
+                        Deep-dive →
+                      </Link>
                     </td>
                   </tr>
                 ))}
@@ -836,6 +918,11 @@ export default function AnalyticsPage() {
         </div>
       </div>
 
+      </>)}
+
+      {/* ═══════ REPUTATION TAB ═══════ */}
+      {tab === "reputation" && (<>
+
       {/* ── REVIEW LANGUAGE ── */}
       <div className="bg-white rounded-lg border border-gray-200 p-6">
         <h2 className="text-base font-semibold text-gray-900 mb-1">What couples say</h2>
@@ -883,6 +970,11 @@ export default function AnalyticsPage() {
           </p>
         )}
       </div>
+
+      </>)}
+
+      {/* ═══════ OPERATIONS TAB ═══════ */}
+      {tab === "operations" && (<>
 
       {/* ── WEBSITE TRAFFIC ── */}
       <div className="bg-white rounded-lg border border-gray-200 p-6">
@@ -1001,6 +1093,28 @@ export default function AnalyticsPage() {
                 </ResponsiveContainer>
               </div>
             )}
+
+            {/* Coordinator leaderboard */}
+            {(responseTimes as any).byCoordinator && (responseTimes as any).byCoordinator.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Speed to lead by coordinator</p>
+                <div className="space-y-2">
+                  {(responseTimes as any).byCoordinator.map((row: any, i: number) => (
+                    <div key={row.name} className="flex items-center gap-3">
+                      <span className="text-xs font-medium text-gray-700 w-24 flex-shrink-0 truncate">{row.name}</span>
+                      <div className="flex-1 bg-gray-100 rounded-full h-2 overflow-hidden">
+                        <div
+                          className={`h-full rounded-full ${i === 0 ? "bg-green-400" : i === 1 ? "bg-blue-400" : "bg-gray-400"}`}
+                          style={{ width: `${Math.max(5, 100 - (row.avgMinutes / 480) * 100)}%` }}
+                        />
+                      </div>
+                      <span className="text-xs text-gray-500 w-20 text-right flex-shrink-0">{formatMinutes(row.avgMinutes)} avg</span>
+                      <span className="text-xs text-gray-400 w-14 text-right flex-shrink-0">{row.count} replies</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         ) : (
           <p className="text-sm text-gray-400">
@@ -1008,6 +1122,8 @@ export default function AnalyticsPage() {
           </p>
         )}
       </div>
+
+      </>)}
     </div>
   );
 }

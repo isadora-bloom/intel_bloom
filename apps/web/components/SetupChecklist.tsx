@@ -7,51 +7,16 @@ import { Check, ChevronRight, X, Loader2 } from "lucide-react";
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface ChecklistStatus {
-  funnelConfig: Record<string, any>;
-  venueProfile: Record<string, any>;
-  calendlyConnected: boolean;
-  briefingEmail: string | null;
-  emailConnected: boolean;
+  hasNoaaStation: boolean;
+  hasTrends: boolean;
+  hasFedDistrict: boolean;
+  sageTone: string | null;
+  onboardingComplete: boolean;
   clientCount: number;
   teamCount: number;
+  city: string | null;
+  state: string | null;
   venueName: string | null;
-}
-
-// ── Chip multi-select ─────────────────────────────────────────────────────────
-
-function Chips({ options, selected, onChange }: {
-  options: { value: string; label: string }[];
-  selected: string[];
-  onChange: (v: string[]) => void;
-}) {
-  return (
-    <div className="flex flex-wrap gap-2">
-      {options.map(opt => (
-        <button key={opt.value} type="button"
-          onClick={() => onChange(selected.includes(opt.value) ? selected.filter(x => x !== opt.value) : [...selected, opt.value])}
-          className={`px-3 py-1.5 rounded-full border text-sm transition-colors ${
-            selected.includes(opt.value) ? "bg-blue-600 border-blue-600 text-white" : "bg-white border-gray-200 text-gray-700 hover:border-gray-400"
-          }`}>
-          {opt.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function RangeBuckets({ options, selected, onChange }: { options: string[]; selected: string; onChange: (v: string) => void }) {
-  return (
-    <div className="flex flex-wrap gap-2">
-      {options.map(opt => (
-        <button key={opt} type="button" onClick={() => onChange(opt)}
-          className={`px-3 py-1.5 rounded-lg border text-sm font-medium transition-colors ${
-            selected === opt ? "bg-blue-600 border-blue-600 text-white" : "bg-white border-gray-200 text-gray-700 hover:border-gray-400"
-          }`}>
-          {opt}
-        </button>
-      ))}
-    </div>
-  );
 }
 
 // ── Modal wrapper ─────────────────────────────────────────────────────────────
@@ -71,138 +36,36 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
   );
 }
 
-// ── Individual modal content ───────────────────────────────────────────────────
-
-const AWARENESS_OPTIONS = [
-  { value: "the_knot", label: "The Knot" }, { value: "weddingwire", label: "WeddingWire" },
-  { value: "zola", label: "Zola" }, { value: "google_search", label: "Google Search" },
-  { value: "instagram", label: "Instagram" }, { value: "facebook", label: "Facebook" },
-  { value: "reddit", label: "Reddit" }, { value: "ai_tools", label: "AI tools" },
-  { value: "word_of_mouth", label: "Word of mouth" }, { value: "styled_shoots", label: "Styled shoots" },
-  { value: "press", label: "Press / features" }, { value: "tiktok", label: "TikTok" },
-  { value: "pinterest", label: "Pinterest" }, { value: "other", label: "Other" },
-];
-
-const FIRST_TOUCH_OPTIONS = [
-  { value: "email", label: "Email" }, { value: "phone", label: "Phone call" },
-  { value: "the_knot_inquiry", label: "The Knot inquiry" }, { value: "weddingwire_inquiry", label: "WeddingWire inquiry" },
-  { value: "zola_inquiry", label: "Zola inquiry" }, { value: "website_form", label: "Website contact form" },
-  { value: "book_tour_direct", label: "Book a tour directly" }, { value: "instagram_dm", label: "Instagram DM" },
-];
-
-const TOUR_OPTIONS = [
-  { value: "calendly", label: "Calendly" }, { value: "acuity", label: "Acuity Scheduling" },
-  { value: "manual_email", label: "Manual / email" }, { value: "phone_only", label: "Phone only" },
-  { value: "no_tours", label: "No in-person tours" },
-];
-
-const CONTRACT_OPTIONS = [
-  { value: "honeybook", label: "HoneyBook" }, { value: "dubsado", label: "Dubsado" },
-  { value: "17hats", label: "17hats" }, { value: "manual", label: "Manual / PDF" }, { value: "other", label: "Other" },
-];
-
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function SetupChecklist({ venueId }: { venueId: string }) {
   const { data: status, refetch } = trpc.venues.getChecklistStatus.useQuery();
-  const saveSection = trpc.venues.saveOnboardingSection.useMutation({ onSuccess: () => refetch() });
+  const updateVenue = trpc.venues.update.useMutation({ onSuccess: () => refetch() });
   const inviteMember = trpc.venues.inviteTeamMember.useMutation({ onSuccess: () => { setInviteEmail(""); refetch(); } });
 
   const [activeModal, setActiveModal] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [dismissed, setDismissed] = useState(false);
 
-  // Modal state
-  const [awareness, setAwareness] = useState<string[]>([]);
-  const [firstTouch, setFirstTouch] = useState<string[]>([]);
-  const [tourMethod, setTourMethod] = useState("");
-  const [contractMethod, setContractMethod] = useState("");
-  const [avgPackage, setAvgPackage] = useState("");
-  const [adSpend, setAdSpend] = useState("");
-  const [toursToBook, setToursToBook] = useState("");
-  const [calendlyPat, setCalendlyPat] = useState("");
+  // Team invite state
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("member");
-  const [briefingEmail, setBriefingEmail] = useState("");
 
   if (!status || dismissed) return null;
-
-  function openModal(id: string) {
-    if (!status) return;
-    // Pre-fill from existing data
-    const fc = status.funnelConfig;
-    const vp = status.venueProfile;
-    if (id === "awareness") setAwareness(fc.awareness_channels ?? []);
-    if (id === "first_touch") setFirstTouch(fc.first_touch_methods ?? []);
-    if (id === "tour_contract") { setTourMethod(fc.tour_method ?? ""); setContractMethod(fc.contract_method ?? ""); }
-    if (id === "economics") { setAvgPackage(vp.avg_package_value_bucket?.value ?? ""); setAdSpend(vp.monthly_ad_spend_bucket?.value ?? ""); setToursToBook(vp.typical_tours_per_booking_bucket?.value ?? ""); }
-    if (id === "briefing") setBriefingEmail(status.briefingEmail ?? "");
-    setActiveModal(id);
-  }
-
-  async function save(data: Parameters<typeof saveSection.mutate>[0]) {
-    setSaving(true);
-    await saveSection.mutateAsync(data);
-    setSaving(false);
-    setActiveModal(null);
-  }
-
-  function pf<T>(value: T) {
-    return { value, source: "user_input", confidence: "confirmed", updatedAt: new Date().toISOString() };
-  }
 
   // ── Checklist items ──────────────────────────────────────────────────────────
 
   const items = [
     {
-      id: "awareness",
-      title: "Where couples find you",
-      description: "Shapes attribution across all your data",
-      unlocks: "Source ROI · Cost per inquiry · Platform comparison",
-      complete: (status.funnelConfig.awareness_channels?.length ?? 0) > 0,
-      category: "Your funnel",
-    },
-    {
-      id: "first_touch",
-      title: "How couples first reach out",
-      description: "Improves email scan accuracy and stage matching",
-      unlocks: "Email matching · Pipeline stage tracking",
-      complete: (status.funnelConfig.first_touch_methods?.length ?? 0) > 0,
-      category: "Your funnel",
-    },
-    {
-      id: "tour_contract",
-      title: "Tour & contract tools",
-      description: "Tells us which integrations matter for you",
-      unlocks: "Calendly sync · HoneyBook import",
-      complete: !!status.funnelConfig.tour_method,
-      category: "Your funnel",
-    },
-    {
-      id: "economics",
-      title: "Your business economics",
-      description: "We calculate your real cost-per-booking by source",
-      unlocks: "CPA by platform · Revenue attribution · ROI comparison",
-      complete: !!status.venueProfile.avg_package_value_bucket?.value,
-      category: "Your profile",
-    },
-    {
       id: "gmail",
       title: "Connect Gmail",
       description: "Auto-extract source attribution from inquiry emails",
       unlocks: "Source attribution · Lead matching · Email timeline",
-      complete: status.emailConnected,
+      // No direct check on checklistStatus for email — link directs user to connect
+      complete: false,
       category: "Integrations",
       isLink: true,
       href: `/api/auth/google?venue_id=${venueId}`,
-    },
-    {
-      id: "calendly",
-      title: "Connect Calendly",
-      description: "Auto-track tours and real conversion rates",
-      unlocks: "Tour tracking · Real tours-per-booking · Pipeline velocity",
-      complete: status.calendlyConnected,
-      category: "Integrations",
     },
     {
       id: "client_history",
@@ -212,7 +75,7 @@ export default function SetupChecklist({ venueId }: { venueId: string }) {
       complete: status.clientCount > 0,
       category: "Integrations",
       isLink: true,
-      href: "/settings",
+      href: "/import",
     },
     {
       id: "team",
@@ -223,12 +86,15 @@ export default function SetupChecklist({ venueId }: { venueId: string }) {
       category: "Your team",
     },
     {
-      id: "briefing",
-      title: "Weekly briefing email",
-      description: "AI summary of your business and market, in your inbox",
-      unlocks: "Weekly insights · Trend alerts · Action recommendations",
-      complete: !!status.briefingEmail,
-      category: "Your team",
+      id: "configure_sage",
+      title: "Configure Sage",
+      description: "Set your venue's NOAA station and intelligence signals",
+      unlocks: "Weather risk · Macro signals · Trend data",
+      // Use hasNoaaStation as proxy for "configured" (sageTone defaults to warm_professional)
+      complete: status.hasNoaaStation,
+      category: "Intelligence",
+      isLink: true,
+      href: "/settings",
     },
   ];
 
@@ -236,7 +102,7 @@ export default function SetupChecklist({ venueId }: { venueId: string }) {
   const pct = Math.round((completedCount / items.length) * 100);
 
   // Group by category
-  const categories = ["Your funnel", "Your profile", "Integrations", "Your team"];
+  const categories = ["Integrations", "Your team", "Intelligence"];
 
   // Don't show if everything is done
   if (completedCount === items.length) return null;
@@ -292,7 +158,7 @@ export default function SetupChecklist({ venueId }: { venueId: string }) {
                             Set up <ChevronRight size={13} />
                           </a>
                         ) : (
-                          <button onClick={() => openModal(item.id)}
+                          <button onClick={() => setActiveModal(item.id)}
                             className="flex-shrink-0 flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium transition-colors">
                             Set up <ChevronRight size={13} />
                           </button>
@@ -309,96 +175,6 @@ export default function SetupChecklist({ venueId }: { venueId: string }) {
 
       {/* ── Modals ── */}
 
-      {activeModal === "awareness" && (
-        <Modal title="Where do couples find you?" onClose={() => setActiveModal(null)}>
-          <p className="text-xs text-gray-500 mb-4">Select all that apply — even occasional sources. This shapes how we read attribution across all your data.</p>
-          <Chips options={AWARENESS_OPTIONS} selected={awareness} onChange={setAwareness} />
-          <button onClick={() => save({ funnelConfig: { awareness_channels: awareness } })} disabled={saving || !awareness.length}
-            className="mt-5 w-full bg-blue-600 text-white rounded-lg py-2.5 text-sm font-medium disabled:opacity-40 flex items-center justify-center gap-2">
-            {saving && <Loader2 size={13} className="animate-spin" />} Save
-          </button>
-        </Modal>
-      )}
-
-      {activeModal === "first_touch" && (
-        <Modal title="How do couples first reach out?" onClose={() => setActiveModal(null)}>
-          <p className="text-xs text-gray-500 mb-4">After discovering you, what&apos;s their typical first move?</p>
-          <Chips options={FIRST_TOUCH_OPTIONS} selected={firstTouch} onChange={setFirstTouch} />
-          <button onClick={() => save({ funnelConfig: { first_touch_methods: firstTouch } })} disabled={saving || !firstTouch.length}
-            className="mt-5 w-full bg-blue-600 text-white rounded-lg py-2.5 text-sm font-medium disabled:opacity-40 flex items-center justify-center gap-2">
-            {saving && <Loader2 size={13} className="animate-spin" />} Save
-          </button>
-        </Modal>
-      )}
-
-      {activeModal === "tour_contract" && (
-        <Modal title="How does booking work?" onClose={() => setActiveModal(null)}>
-          <div className="space-y-6">
-            <div>
-              <p className="text-sm font-medium text-gray-800 mb-3">How do you schedule tours?</p>
-              <Chips options={TOUR_OPTIONS} selected={tourMethod ? [tourMethod] : []} onChange={v => setTourMethod(v[0] ?? "")} />
-            </div>
-            <div>
-              <p className="text-sm font-medium text-gray-800 mb-3">How do contracts happen?</p>
-              <Chips options={CONTRACT_OPTIONS} selected={contractMethod ? [contractMethod] : []} onChange={v => setContractMethod(v[0] ?? "")} />
-            </div>
-          </div>
-          <button onClick={() => save({ funnelConfig: { tour_method: tourMethod, contract_method: contractMethod } })} disabled={saving || (!tourMethod && !contractMethod)}
-            className="mt-5 w-full bg-blue-600 text-white rounded-lg py-2.5 text-sm font-medium disabled:opacity-40 flex items-center justify-center gap-2">
-            {saving && <Loader2 size={13} className="animate-spin" />} Save
-          </button>
-        </Modal>
-      )}
-
-      {activeModal === "economics" && (
-        <Modal title="Your business economics" onClose={() => setActiveModal(null)}>
-          <p className="text-xs text-gray-500 mb-5">Estimates are fine — we refine these automatically as real data comes in. We use these to calculate your cost-per-booking by source.</p>
-          <div className="space-y-6">
-            <div>
-              <p className="text-sm font-medium text-gray-800 mb-1">Average wedding package value</p>
-              <p className="text-xs text-gray-400 mb-2">All-in — venue fee, catering, bar, whatever you charge.</p>
-              <RangeBuckets options={["Under $5k","$5–10k","$10–15k","$15–20k","$20–30k","$30k+"]} selected={avgPackage} onChange={setAvgPackage} />
-            </div>
-            <div>
-              <p className="text-sm font-medium text-gray-800 mb-1">Monthly advertising spend</p>
-              <p className="text-xs text-gray-400 mb-2">Total across all paid channels — listings, ads, etc.</p>
-              <RangeBuckets options={["$0","Under $500","$500–1k","$1–3k","$3–5k","$5k+"]} selected={adSpend} onChange={setAdSpend} />
-            </div>
-            <div>
-              <p className="text-sm font-medium text-gray-800 mb-1">Tours until one booking</p>
-              <p className="text-xs text-gray-400 mb-2">Your gut feel — we&apos;ll calculate the real number from your data.</p>
-              <RangeBuckets options={["1–2","3–4","5–7","8+"]} selected={toursToBook} onChange={setToursToBook} />
-            </div>
-          </div>
-          <button onClick={() => save({ venueProfile: {
-            avg_package_value_bucket: avgPackage ? { value: avgPackage, source: "user_estimate", confidence: "estimated", updatedAt: new Date().toISOString() } : undefined,
-            monthly_ad_spend_bucket: adSpend ? { value: adSpend, source: "user_estimate", confidence: "estimated", updatedAt: new Date().toISOString() } : undefined,
-            typical_tours_per_booking_bucket: toursToBook ? { value: toursToBook, source: "user_estimate", confidence: "estimated", updatedAt: new Date().toISOString() } : undefined,
-          }})} disabled={saving || (!avgPackage && !adSpend && !toursToBook)}
-            className="mt-5 w-full bg-blue-600 text-white rounded-lg py-2.5 text-sm font-medium disabled:opacity-40 flex items-center justify-center gap-2">
-            {saving && <Loader2 size={13} className="animate-spin" />} Save
-          </button>
-        </Modal>
-      )}
-
-      {activeModal === "calendly" && (
-        <Modal title="Connect Calendly" onClose={() => setActiveModal(null)}>
-          <p className="text-xs text-gray-500 mb-4">
-            Your Personal Access Token lets Bloom sync your tour history and track conversion rates automatically.
-          </p>
-          <input type="password" value={calendlyPat} onChange={e => setCalendlyPat(e.target.value)}
-            placeholder="Paste your Personal Access Token"
-            className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-          <p className="text-xs text-gray-400 mt-2">
-            Find it at <span className="text-blue-600 font-medium">calendly.com → Integrations → API & Webhooks</span>
-          </p>
-          <button onClick={() => save({ calendlyApiKey: calendlyPat })} disabled={saving || !calendlyPat.trim()}
-            className="mt-5 w-full bg-blue-600 text-white rounded-lg py-2.5 text-sm font-medium disabled:opacity-40 flex items-center justify-center gap-2">
-            {saving && <Loader2 size={13} className="animate-spin" />} Connect Calendly
-          </button>
-        </Modal>
-      )}
-
       {activeModal === "team" && (
         <Modal title="Invite a team member" onClose={() => setActiveModal(null)}>
           <p className="text-xs text-gray-500 mb-4">They&apos;ll get an email with a link to join your venue&apos;s dashboard.</p>
@@ -408,29 +184,19 @@ export default function SetupChecklist({ venueId }: { venueId: string }) {
               className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
             <select value={inviteRole} onChange={e => setInviteRole(e.target.value)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-              <option value="member">Member — view & edit data</option>
+              <option value="member">Member — view &amp; edit data</option>
               <option value="admin">Admin — full access including settings</option>
             </select>
           </div>
-          <button onClick={async () => { setSaving(true); await inviteMember.mutateAsync({ email: inviteEmail, role: inviteRole as "admin" | "member" }); setSaving(false); setActiveModal(null); }}
+          <button onClick={async () => {
+            setSaving(true);
+            await inviteMember.mutateAsync({ email: inviteEmail, role: inviteRole as "admin" | "member" });
+            setSaving(false);
+            setActiveModal(null);
+          }}
             disabled={saving || !inviteEmail.includes("@")}
             className="mt-5 w-full bg-blue-600 text-white rounded-lg py-2.5 text-sm font-medium disabled:opacity-40 flex items-center justify-center gap-2">
             {saving && <Loader2 size={13} className="animate-spin" />} Send invitation
-          </button>
-        </Modal>
-      )}
-
-      {activeModal === "briefing" && (
-        <Modal title="Weekly briefing email" onClose={() => setActiveModal(null)}>
-          <p className="text-xs text-gray-500 mb-4">
-            A short AI-written summary of your business and market, sent every Monday morning. No spam — you can turn it off anytime in Settings.
-          </p>
-          <input type="email" value={briefingEmail} onChange={e => setBriefingEmail(e.target.value)}
-            placeholder="you@yourvenue.com"
-            className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-          <button onClick={() => save({ briefingEmail })} disabled={saving || !briefingEmail.includes("@")}
-            className="mt-5 w-full bg-blue-600 text-white rounded-lg py-2.5 text-sm font-medium disabled:opacity-40 flex items-center justify-center gap-2">
-            {saving && <Loader2 size={13} className="animate-spin" />} Save
           </button>
         </Modal>
       )}

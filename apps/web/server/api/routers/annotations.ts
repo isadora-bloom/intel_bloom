@@ -21,7 +21,7 @@ export const annotationsRouter = router({
       source: z.enum(["human_proactive", "system_detected", "human_reactive", "all"]).default("all"),
     }).optional())
     .query(async ({ ctx, input }) => {
-      let query = ctx.supabase
+      let query = ctx.db
         .from("annotations")
         .select("*")
         .eq("venue_id", ctx.venueId)
@@ -49,7 +49,7 @@ export const annotationsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const { error } = await ctx.supabase
+      const { error } = await ctx.db
         .from("annotations")
         .update({
           annotation_type: input.annotationType,
@@ -80,7 +80,7 @@ export const annotationsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const { data, error } = await ctx.supabase
+      const { data, error } = await ctx.db
         .from("annotations")
         .insert({
           venue_id: ctx.venueId,
@@ -105,7 +105,7 @@ export const annotationsRouter = router({
   delete: venueProcedure
     .input(z.object({ id: z.string().uuid() }))
     .mutation(async ({ ctx, input }) => {
-      const { error } = await ctx.supabase
+      const { error } = await ctx.db
         .from("annotations")
         .delete()
         .eq("id", input.id)

@@ -65,7 +65,7 @@ export const socialRouter = router({
       offset:   z.number().int().min(0).default(0),
     }))
     .query(async ({ ctx, input }) => {
-      let q = ctx.supabase
+      let q = ctx.db
         .from("social_posts")
         .select("*")
         .eq("venue_id", ctx.venueId)
@@ -145,7 +145,7 @@ export const socialRouter = router({
         updated_at:               new Date().toISOString(),
       };
 
-      const { data, error } = await ctx.supabase
+      const { data, error } = await ctx.db
         .from("social_posts")
         .upsert(row, { onConflict: "venue_id,platform,posted_at,post_type" })
         .select()
@@ -163,7 +163,7 @@ export const socialRouter = router({
       id: z.string().uuid(),
     }))
     .mutation(async ({ ctx, input }) => {
-      const { error } = await ctx.supabase
+      const { error } = await ctx.db
         .from("social_posts")
         .delete()
         .eq("id", input.id)
@@ -200,7 +200,7 @@ export const socialRouter = router({
     }))
     .query(async ({ ctx, input }) => {
       // Fetch the post
-      const { data: post, error: postError } = await ctx.supabase
+      const { data: post, error: postError } = await ctx.db
         .from("social_posts")
         .select("id, posted_at, platform, post_type, reach, is_viral")
         .eq("id", input.postId)
@@ -233,21 +233,21 @@ export const socialRouter = router({
       // workaround. We use { count: "exact", head: true } to get just the
       // count without fetching rows.
       const [afterResult, beforeResult, seasonalResult] = await Promise.all([
-        ctx.supabase
+        ctx.db
           .from("inquiries")
           .select("id", { count: "exact", head: true })
           .eq("venue_id", ctx.venueId)
           .gte("created_at", afterStart)
           .lt("created_at", afterEnd),
 
-        ctx.supabase
+        ctx.db
           .from("inquiries")
           .select("id", { count: "exact", head: true })
           .eq("venue_id", ctx.venueId)
           .gte("created_at", beforeStart)
           .lt("created_at", beforeEnd),
 
-        ctx.supabase
+        ctx.db
           .from("inquiries")
           .select("id", { count: "exact", head: true })
           .eq("venue_id", ctx.venueId)
@@ -321,7 +321,7 @@ export const socialRouter = router({
       const windowMs   = windowDays * 24 * 60 * 60 * 1000;
 
       // Fetch all posts in last 12 months
-      const { data: posts, error: postsError } = await ctx.supabase
+      const { data: posts, error: postsError } = await ctx.db
         .from("social_posts")
         .select("id, platform, post_type, posted_at, reach")
         .eq("venue_id", ctx.venueId)
@@ -338,7 +338,7 @@ export const socialRouter = router({
       const earliestNeeded  = new Date(Date.parse(twelveMonthsAgo) - windowBuffer).toISOString();
       const latestNeeded    = new Date(Date.now() + windowBuffer).toISOString();
 
-      const { data: inquiries, error: inquiriesError } = await ctx.supabase
+      const { data: inquiries, error: inquiriesError } = await ctx.db
         .from("inquiries")
         .select("created_at")
         .eq("venue_id", ctx.venueId)

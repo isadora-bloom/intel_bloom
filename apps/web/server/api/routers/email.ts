@@ -1,9 +1,7 @@
 import { z } from "zod";
 import { router, venueProcedure } from "@/lib/trpc/server";
 import { TRPCError } from "@trpc/server";
-import Anthropic from "@anthropic-ai/sdk";
-
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+import { callAIJson } from "@/lib/ai";
 
 // ── GMAIL HELPERS ──────────────────────────────────────────────────────────────
 
@@ -167,31 +165,11 @@ Body: ${e.body}
 Return a JSON array of exactly ${emails.length} objects:
 [{ "is_wedding_related": bool, "name": str|null, "event_date": str|null, "source": str|null, "source_quote": str|null, "guest_count": int|null, "summary": str }, ...]`;
 
-  // Retry up to 3 times with exponential backoff on overload (529)
-  let response;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      response = await anthropic.messages.create({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 1500,
-        messages: [{ role: "user", content: prompt }],
-      });
-      break;
-    } catch (err: any) {
-      if ((err?.status === 529 || err?.status === 429) && attempt < 2) {
-        await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
-      } else {
-        throw err;
-      }
-    }
-  }
-  if (!response) throw new Error("Claude unavailable after retries");
-
-  const text = response.content[0].type === "text" ? response.content[0].text : "[]";
-
   try {
-    const jsonMatch = text.match(/\[[\s\S]*\]/);
-    const parsed = JSON.parse(jsonMatch?.[0] ?? "[]");
+    const parsed = await callAIJson<any[]>(prompt, {
+      maxTokens: 1500,
+      taskType: "email_extraction",
+    });
     return parsed.map((r: any) => ({
       isWeddingRelated: !!r.is_wedding_related,
       name: r.name ?? null,
@@ -480,7 +458,7 @@ async function matchExtraction(
 export const emailRouter = router({
   // Check if Gmail is connected
   getConnection: venueProcedure.query(async ({ ctx }) => {
-    const { data } = await ctx.supabase
+    const { data } = await ctx.db
       .from("email_connections")
       .select("id, email_address, last_synced_at, created_at")
       .eq("venue_id", ctx.venueId)
@@ -492,7 +470,7 @@ export const emailRouter = router({
 
   // Disconnect Gmail
   disconnect: venueProcedure.mutation(async ({ ctx }) => {
-    await ctx.supabase
+    await ctx.db
       .from("email_connections")
       .delete()
       .eq("venue_id", ctx.venueId)
@@ -508,17 +486,16 @@ export const emailRouter = router({
     }))
     .mutation(async ({ ctx, input }) => {
       const [{ token, connectionId }, { data: venueData }] = await Promise.all([
-        getValidToken(ctx.supabase, ctx.venueId),
-        ctx.supabase.from("venues").select("name, funnel_config").eq("id", ctx.venueId).single(),
+        getValidToken(ctx.db, ctx.venueId),
+        ctx.db.from("venues").select("name").eq("id", ctx.venueId).single(),
       ]);
-      const fc = (venueData?.funnel_config as Record<string, any>) ?? {};
       const venueCtx = {
         venueName: venueData?.name ?? "the venue",
-        awarenessChannels: (fc.awareness_channels as string[]) ?? [],
+        awarenessChannels: [] as string[],
       };
 
       // Already-scanned message IDs so we don't re-extract
-      const { data: existingExtractions } = await ctx.supabase
+      const { data: existingExtractions } = await ctx.db
         .from("email_extractions")
         .select("gmail_message_id")
         .eq("venue_id", ctx.venueId);
@@ -626,7 +603,7 @@ export const emailRouter = router({
           : null;
 
         const match = await matchExtraction(
-          ctx.supabase,
+          ctx.db,
           ctx.venueId,
           extraction,
           fromEmail,
@@ -661,7 +638,7 @@ export const emailRouter = router({
 
       // Bulk insert (ignore duplicates)
       if (toInsert.length > 0) {
-        await ctx.supabase
+        await ctx.db
           .from("email_extractions")
           .upsert(toInsert, { onConflict: "venue_id,gmail_message_id", ignoreDuplicates: true });
       }
@@ -669,14 +646,14 @@ export const emailRouter = router({
       // If any auto-linked leads, update their linked_inquiry_id
       for (const r of results) {
         if (r.match_status === "auto_linked" && r.matched_lead_id && r.matched_inquiry_id) {
-          await ctx.supabase
+          await ctx.db
             .from("leads")
             .update({ linked_inquiry_id: r.matched_inquiry_id })
             .eq("id", r.matched_lead_id)
             .is("linked_inquiry_id", null); // only if not already linked
         }
         if (r.match_status === "auto_linked" && r.matched_lead_id && r.matched_client_id) {
-          await ctx.supabase
+          await ctx.db
             .from("leads")
             .update({ linked_client_id: r.matched_client_id })
             .eq("id", r.matched_lead_id)
@@ -684,14 +661,14 @@ export const emailRouter = router({
         }
         // Also back-fill source on inquiry/client if we extracted a source and they don't have one
         if (r.extracted_source && r.matched_inquiry_id) {
-          await ctx.supabase
+          await ctx.db
             .from("inquiries")
             .update({ self_reported_source: r.extracted_source })
             .eq("id", r.matched_inquiry_id)
             .is("self_reported_source", null);
         }
         if (r.extracted_source && r.matched_client_id) {
-          await ctx.supabase
+          await ctx.db
             .from("clients")
             .update({ self_reported_source: r.extracted_source })
             .eq("id", r.matched_client_id)
@@ -700,7 +677,7 @@ export const emailRouter = router({
       }
 
       // Update last_synced_at on connection
-      await ctx.supabase
+      await ctx.db
         .from("email_connections")
         .update({ last_synced_at: new Date().toISOString() })
         .eq("id", connectionId);
@@ -736,7 +713,7 @@ export const emailRouter = router({
 
   // Get previously scanned extractions with pending review
   getPendingMatches: venueProcedure.query(async ({ ctx }) => {
-    const { data } = await ctx.supabase
+    const { data } = await ctx.db
       .from("email_extractions")
       .select("*")
       .eq("venue_id", ctx.venueId)
@@ -755,7 +732,7 @@ export const emailRouter = router({
     }))
     .mutation(async ({ ctx, input }) => {
       if (input.action === "reject") {
-        await ctx.supabase
+        await ctx.db
           .from("email_extractions")
           .update({ match_status: "rejected" })
           .eq("id", input.extractionId)
@@ -764,7 +741,7 @@ export const emailRouter = router({
       }
 
       // Approve: promote to auto_linked and push source back-fill
-      const { data: extraction } = await ctx.supabase
+      const { data: extraction } = await ctx.db
         .from("email_extractions")
         .select("*")
         .eq("id", input.extractionId)
@@ -773,34 +750,34 @@ export const emailRouter = router({
 
       if (!extraction) return { ok: false };
 
-      await ctx.supabase
+      await ctx.db
         .from("email_extractions")
         .update({ match_status: "auto_linked" })
         .eq("id", input.extractionId);
 
       if (extraction.matched_lead_id && extraction.matched_inquiry_id) {
-        await ctx.supabase
+        await ctx.db
           .from("leads")
           .update({ linked_inquiry_id: extraction.matched_inquiry_id })
           .eq("id", extraction.matched_lead_id)
           .is("linked_inquiry_id", null);
       }
       if (extraction.matched_lead_id && extraction.matched_client_id) {
-        await ctx.supabase
+        await ctx.db
           .from("leads")
           .update({ linked_client_id: extraction.matched_client_id })
           .eq("id", extraction.matched_lead_id)
           .is("linked_client_id", null);
       }
       if (extraction.extracted_source && extraction.matched_inquiry_id) {
-        await ctx.supabase
+        await ctx.db
           .from("inquiries")
           .update({ self_reported_source: extraction.extracted_source })
           .eq("id", extraction.matched_inquiry_id)
           .is("self_reported_source", null);
       }
       if (extraction.extracted_source && extraction.matched_client_id) {
-        await ctx.supabase
+        await ctx.db
           .from("clients")
           .update({ self_reported_source: extraction.extracted_source })
           .eq("id", extraction.matched_client_id)

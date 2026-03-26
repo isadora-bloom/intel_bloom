@@ -29,25 +29,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const vp: Record<string, unknown> = {};
-  if (awarenessChannels?.length) {
-    vp.awareness_channels = {
-      value: awarenessChannels,
-      source: "user_input",
-      confidence: "confirmed",
-      updatedAt: new Date().toISOString(),
-    };
-  }
-
   const { error } = await supabase
     .from("venues")
-    .update({
-      onboarding_complete: true,
-      onboarding_step: 3,
-      funnel_config: { awareness_channels: awarenessChannels ?? [] },
-      venue_profile: vp,
-      ...(briefingEmail ? { briefing_email: briefingEmail } : {}),
-    })
+    .update({ onboarding_complete: true })
     .eq("id", venueId);
 
   if (error) {

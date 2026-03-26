@@ -3,8 +3,70 @@
 import { trpc } from "@/lib/trpc/client";
 import { useState } from "react";
 import { format } from "date-fns";
-import { Inbox, Filter } from "lucide-react";
+import { Inbox, Filter, ChevronDown, ChevronUp } from "lucide-react";
 import Link from "next/link";
+
+function formatAlertType(alertType: string): string {
+  return alertType
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function ResponseAlertsBanner() {
+  const utils = trpc.useUtils();
+  const { data } = trpc.inquiries.getAlerts.useQuery();
+  const resolveAlert = trpc.inquiries.resolveAlert.useMutation({
+    onSuccess: () => utils.inquiries.getAlerts.invalidate(),
+  });
+  const [open, setOpen] = useState(true);
+
+  if (!data || data.length === 0) return null;
+
+  return (
+    <div className="mb-4 rounded-lg border border-red-200 bg-red-50 overflow-hidden">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between px-4 py-3 text-left"
+      >
+        <span className="text-sm font-semibold text-red-700">
+          ⚠ {data.length} slow response{data.length !== 1 ? "s" : ""} need attention
+        </span>
+        {open ? (
+          <ChevronUp size={15} className="text-red-500 flex-shrink-0" />
+        ) : (
+          <ChevronDown size={15} className="text-red-500 flex-shrink-0" />
+        )}
+      </button>
+      {open && (
+        <div className="border-t border-red-200 divide-y divide-red-100">
+          {data.map((alert: any) => (
+            <div key={alert.id} className="flex items-center justify-between gap-4 px-4 py-2.5">
+              <span className="text-sm text-gray-800 font-medium w-40 truncate">
+                {alert.inquiry?.name_extracted ?? "Unknown"}
+              </span>
+              <span className="text-sm text-gray-600 flex-1">
+                {formatAlertType(alert.alert_type)}
+              </span>
+              {alert.actual_minutes != null && (
+                <span className="text-xs text-red-600 whitespace-nowrap">
+                  {alert.actual_minutes} min
+                  {alert.threshold_minutes != null && ` (threshold: ${alert.threshold_minutes} min)`}
+                </span>
+              )}
+              <button
+                onClick={() => resolveAlert.mutate({ id: alert.id })}
+                disabled={resolveAlert.isPending}
+                className="flex-shrink-0 text-xs text-gray-500 hover:text-red-600 border border-gray-300 hover:border-red-300 px-2.5 py-1 rounded transition-colors disabled:opacity-50"
+              >
+                Dismiss
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 const PLATFORM_COLORS: Record<string, string> = {
   knot: "bg-purple-100 text-purple-700",
@@ -47,6 +109,9 @@ export default function InquiriesPage() {
           </p>
         </div>
       </div>
+
+      {/* Response alerts */}
+      <ResponseAlertsBanner />
 
       {/* Filters */}
       <div className="bg-white rounded-lg border border-gray-200 p-4 mb-4 flex items-center gap-4">

@@ -1,9 +1,7 @@
 import { z } from "zod";
 import { router, venueProcedure } from "@/lib/trpc/server";
 import { TRPCError } from "@trpc/server";
-import Anthropic from "@anthropic-ai/sdk";
-
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+import { callAIJson } from "@/lib/ai";
 
 // ── GOOGLE PLACES API ─────────────────────────────────────────────────────────
 
@@ -32,12 +30,9 @@ async function extractKnotReviewsFromText(pastedText: string): Promise<Array<{
   date: string | null;
   weddingDate: string | null;
 }>> {
-  const response = await anthropic.messages.create({
-    model: "claude-haiku-4-5-20251001",
-    max_tokens: 4000,
-    messages: [{
-      role: "user",
-      content: `Extract ALL wedding venue reviews from this pasted text (copied from The Knot or similar).
+  try {
+    return await callAIJson<Array<{ reviewer: string; rating: number; text: string; date: string | null; weddingDate: string | null }>>(
+      `Extract ALL wedding venue reviews from this pasted text (copied from The Knot or similar).
 
 For each review extract:
 - reviewer: reviewer's name (first name or full name as shown)
@@ -49,16 +44,9 @@ For each review extract:
 Return a JSON array. If no reviews found, return [].
 
 Pasted text:
-${pastedText.slice(0, 60000)}
-
-Return ONLY the JSON array, no other text.`,
-    }],
-  });
-
-  const raw = response.content[0].type === "text" ? response.content[0].text : "[]";
-  try {
-    const match = raw.match(/\[[\s\S]*\]/);
-    return JSON.parse(match?.[0] ?? "[]");
+${pastedText.slice(0, 60000)}`,
+      { maxTokens: 4000, taskType: "knot_review_extract" }
+    );
   } catch {
     return [];
   }
@@ -136,7 +124,7 @@ export const reviewsRouter = router({
       offset: z.number().int().min(0).default(0),
     }))
     .query(async ({ ctx, input }) => {
-      let query = ctx.supabase
+      let query = ctx.db
         .from("reviews")
         .select("*, matched_client:clients(id, name_primary, name_partner, event_date)", { count: "exact" })
         .eq("venue_id", ctx.venueId)
@@ -155,7 +143,7 @@ export const reviewsRouter = router({
   // Sync reviews from Google Places API
   syncGoogle: venueProcedure
     .mutation(async ({ ctx }) => {
-      const { data: venue } = await ctx.supabase
+      const { data: venue } = await ctx.db
         .from("venues")
         .select("google_place_id")
         .eq("id", ctx.venueId)
@@ -175,9 +163,9 @@ export const reviewsRouter = router({
         const reviewerName = r.author_name ?? null;
 
         // Try to match to a client
-        const matchResult = await tryMatchReview(ctx.supabase, ctx.venueId, reviewerName, null, reviewDate);
+        const matchResult = await tryMatchReview(ctx.db, ctx.venueId, reviewerName, null, reviewDate);
 
-        const { error } = await ctx.supabase
+        const { error } = await ctx.db
           .from("reviews")
           .upsert({
             venue_id: ctx.venueId,
@@ -201,7 +189,7 @@ export const reviewsRouter = router({
       }
 
       // Back-fill review fields on matched clients
-      const { data: matchedReviews } = await ctx.supabase
+      const { data: matchedReviews } = await ctx.db
         .from("reviews")
         .select("matched_client_id, rating, review_text, review_date")
         .eq("venue_id", ctx.venueId)
@@ -209,10 +197,10 @@ export const reviewsRouter = router({
         .not("matched_client_id", "is", null);
 
       for (const rev of matchedReviews ?? []) {
-        await ctx.supabase
+        await ctx.db
           .from("clients")
           .update({
-            review_left: true,
+            review_submitted: true,
             review_platform: "Google",
             review_star_rating: rev.rating,
             review_text: rev.review_text ?? undefined,
@@ -238,13 +226,13 @@ export const reviewsRouter = router({
         if (!r.text) continue;
 
         const matchResult = await tryMatchReview(
-          ctx.supabase, ctx.venueId,
+          ctx.db, ctx.venueId,
           r.reviewer ?? null,
           r.weddingDate ?? null,
           r.date ?? null
         );
 
-        const { error } = await ctx.supabase
+        const { error } = await ctx.db
           .from("reviews")
           .upsert({
             venue_id: ctx.venueId,
@@ -269,7 +257,7 @@ export const reviewsRouter = router({
       }
 
       // Back-fill client review fields for high-confidence matches
-      const { data: matchedReviews } = await ctx.supabase
+      const { data: matchedReviews } = await ctx.db
         .from("reviews")
         .select("matched_client_id, rating, review_text, review_date")
         .eq("venue_id", ctx.venueId)
@@ -277,10 +265,10 @@ export const reviewsRouter = router({
         .not("matched_client_id", "is", null);
 
       for (const rev of matchedReviews ?? []) {
-        await ctx.supabase
+        await ctx.db
           .from("clients")
           .update({
-            review_left: true,
+            review_submitted: true,
             review_platform: "The Knot",
             review_star_rating: rev.rating,
             review_text: rev.review_text ?? undefined,
@@ -299,7 +287,7 @@ export const reviewsRouter = router({
       clientId: z.string().uuid().nullable(),
     }))
     .mutation(async ({ ctx, input }) => {
-      const { data: review, error: fetchError } = await ctx.supabase
+      const { data: review, error: fetchError } = await ctx.db
         .from("reviews")
         .select("rating, review_text, platform")
         .eq("id", input.reviewId)
@@ -308,7 +296,7 @@ export const reviewsRouter = router({
 
       if (fetchError || !review) throw new TRPCError({ code: "NOT_FOUND" });
 
-      await ctx.supabase
+      await ctx.db
         .from("reviews")
         .update({
           matched_client_id: input.clientId,
@@ -319,10 +307,10 @@ export const reviewsRouter = router({
 
       // Update client's review fields if linking
       if (input.clientId && review.rating) {
-        await ctx.supabase
+        await ctx.db
           .from("clients")
           .update({
-            review_left: true,
+            review_submitted: true,
             review_platform: review.platform === "google" ? "Google" : review.platform === "the_knot" ? "The Knot" : review.platform,
             review_star_rating: review.rating,
             review_text: review.review_text ?? undefined,
@@ -337,7 +325,7 @@ export const reviewsRouter = router({
   // Run Claude analysis on all unanalyzed reviews — extract themes + standout phrases
   analyzeLanguage: venueProcedure
     .mutation(async ({ ctx }) => {
-      const { data: reviews } = await ctx.supabase
+      const { data: reviews } = await ctx.db
         .from("reviews")
         .select("id, review_text, rating")
         .eq("venue_id", ctx.venueId)
@@ -361,21 +349,19 @@ ${reviews.map((r, i) => `[${i}] Rating: ${r.rating}/5\n${r.review_text}`).join("
 Return a JSON array of exactly ${reviews.length} objects:
 [{ "themes": [], "standout_phrases": [], "sentiment_score": 0.0, "concerns_mentioned": [] }, ...]`;
 
-      const response = await anthropic.messages.create({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 3000,
-        messages: [{ role: "user", content: prompt }],
-      });
-
-      const text = response.content[0].type === "text" ? response.content[0].text : "[]";
-      const parsed = JSON.parse(text.match(/\[[\s\S]*\]/)?.[0] ?? "[]");
+      let parsed: any[] = [];
+      try {
+        parsed = await callAIJson<any[]>(prompt, { maxTokens: 3000, taskType: "review_language_analysis" });
+      } catch {
+        parsed = [];
+      }
       const now = new Date().toISOString();
 
       for (let i = 0; i < reviews.length; i++) {
         const analysis = parsed[i];
         if (!analysis) continue;
 
-        await ctx.supabase
+        await ctx.db
           .from("reviews")
           .update({
             themes: analysis.themes ?? [],
@@ -388,13 +374,13 @@ Return a JSON array of exactly ${reviews.length} objects:
 
         // Upsert standout phrases into review_language
         for (const phrase of analysis.standout_phrases ?? []) {
-          await ctx.supabase
+          await ctx.db
             .from("review_language")
             .upsert({
               venue_id: ctx.venueId,
               phrase,
               theme: analysis.themes?.[0] ?? "other",
-              frequency: 1,
+              frequency_count: 1,
               avg_rating: reviews[i].rating,
               source_review_ids: [reviews[i].id],
             }, { onConflict: "venue_id,phrase", ignoreDuplicates: true });
@@ -406,7 +392,7 @@ Return a JSON array of exactly ${reviews.length} objects:
 
   // Stats summary for dashboard widget
   summary: venueProcedure.query(async ({ ctx }) => {
-    const { data } = await ctx.supabase
+    const { data } = await ctx.db
       .from("reviews")
       .select("rating, platform, review_date, matched_client_id")
       .eq("venue_id", ctx.venueId);
@@ -429,4 +415,54 @@ Return a JSON array of exactly ${reviews.length} objects:
 
     return { total, avgRating, byPlatform, recentCount };
   }),
+
+  // List extracted phrases from review_language table
+  listLanguagePhrases: venueProcedure
+    .input(z.object({
+      approvalFilter: z.enum(["all", "sage", "marketing", "concern", "pending"]).default("all"),
+    }))
+    .query(async ({ ctx, input }) => {
+      let q = ctx.db
+        .from("review_language")
+        .select("*")
+        .eq("venue_id", ctx.venueId)
+        .order("frequency_count", { ascending: false });
+
+      if (input.approvalFilter === "sage")       q = q.eq("approved_for_sage", true);
+      if (input.approvalFilter === "marketing")  q = q.eq("approved_for_marketing", true);
+      if (input.approvalFilter === "concern")    q = q.eq("flagged_as_concern", true);
+      if (input.approvalFilter === "pending")    q = q.eq("approved_for_sage", false).eq("approved_for_marketing", false).eq("flagged_as_concern", false);
+
+      const { data, error } = await q;
+      if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
+      return data ?? [];
+    }),
+
+  // Approve a phrase for Sage, marketing, or flag as concern
+  approvePhrase: venueProcedure
+    .input(z.object({
+      phraseId:             z.string().uuid(),
+      approvedForSage:      z.boolean().optional(),
+      approvedForMarketing: z.boolean().optional(),
+      flaggedAsConcern:     z.boolean().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const updates: Record<string, unknown> = {};
+      if (input.approvedForSage      !== undefined) updates.approved_for_sage      = input.approvedForSage;
+      if (input.approvedForMarketing !== undefined) updates.approved_for_marketing = input.approvedForMarketing;
+      if (input.flaggedAsConcern     !== undefined) updates.flagged_as_concern     = input.flaggedAsConcern;
+      if (input.approvedForMarketing === true) {
+        updates.approved_at = new Date().toISOString();
+        updates.approved_by = ctx.user.id;
+      }
+
+      const { error } = await ctx.db
+        .from("review_language")
+        .update(updates)
+        .eq("id", input.phraseId)
+        .eq("venue_id", ctx.venueId);
+
+      if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
+      return { success: true };
+    }),
 });

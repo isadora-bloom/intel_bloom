@@ -7,11 +7,15 @@ import { ArrowLeft, Upload, Check, X, AlertTriangle } from "lucide-react";
 import Link from "next/link";
 
 const UPLOAD_TYPES = [
-  { value: "tour_recording", label: "Tour recording" },
-  { value: "meeting_recording", label: "Meeting recording" },
+  { value: "tour_recording", label: "Tour recording (audio/video)" },
+  { value: "meeting_recording", label: "Meeting recording (audio/video)" },
   { value: "tour_notes", label: "Tour notes" },
   { value: "email_thread", label: "Email thread" },
-  { value: "other", label: "Other" },
+  { value: "contract", label: "Contract or proposal" },
+  { value: "questionnaire", label: "Questionnaire or form" },
+  { value: "invoice", label: "Invoice or quote" },
+  { value: "correspondence", label: "Other correspondence" },
+  { value: "other", label: "Other document" },
 ];
 
 const SENSITIVE_TYPES = ["family_dynamics", "stress_indicator"];
@@ -54,6 +58,8 @@ export default function UploadPage({ params }: { params: Promise<{ id: string }>
         ? "audio"
         : file.type.startsWith("video")
         ? "video"
+        : file.type.startsWith("image")
+        ? "image"
         : file.type === "application/pdf"
         ? "pdf"
         : "text";
@@ -88,7 +94,7 @@ export default function UploadPage({ params }: { params: Promise<{ id: string }>
           <ArrowLeft size={14} />
           Back to client
         </Link>
-        <h1 className="text-2xl font-semibold text-gray-900">Upload recording</h1>
+        <h1 className="text-2xl font-semibold text-gray-900">Upload document</h1>
       </div>
 
       {!uploadId && (
@@ -133,11 +139,11 @@ export default function UploadPage({ params }: { params: Promise<{ id: string }>
                   <input
                     type="file"
                     className="hidden"
-                    accept="audio/*,video/*,.pdf,.txt,.docx"
+                    accept="audio/*,video/*,image/*,.pdf,.txt,.docx,.doc,.csv,.eml,.msg,.rtf,.md"
                     onChange={(e) => e.target.files?.[0] && setFile(e.target.files[0])}
                   />
                 </label>
-                <p className="text-xs text-gray-400 mt-1">Audio, video, PDF, or text files</p>
+                <p className="text-xs text-gray-400 mt-1">Any file type — AI will extract what it can</p>
               </div>
             )}
           </div>

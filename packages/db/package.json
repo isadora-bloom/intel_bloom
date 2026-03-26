@@ -6,13 +6,17 @@
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "seed": "tsx seed.ts"
   },
   "dependencies": {
-    "@prisma/client": "^5.10.0"
+    "@prisma/client": "^5.10.0",
+    "@supabase/supabase-js": "^2.39.0"
   },
   "devDependencies": {
     "prisma": "^5.10.0",
-    "typescript": "^5.3.0"
+    "typescript": "^5.3.0",
+    "ts-node": "^10.9.0",
+    "@types/node": "^20.0.0"
   }
 }

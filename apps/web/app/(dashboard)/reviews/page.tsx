@@ -3,7 +3,7 @@
 import { trpc } from "@/lib/trpc/client";
 import { useState } from "react";
 import { format } from "date-fns";
-import { Star, RefreshCw, Loader2, ExternalLink, Link2, X } from "lucide-react";
+import { Star, RefreshCw, Loader2, ExternalLink, Link2, X, Check, Circle, Flag } from "lucide-react";
 import Link from "next/link";
 
 const PLATFORM_LABELS: Record<string, { label: string; color: string }> = {
@@ -169,6 +169,189 @@ function MatchModal({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+type ApprovalFilter = "all" | "pending" | "sage" | "marketing" | "concern";
+
+const FILTER_TABS: { label: string; value: ApprovalFilter }[] = [
+  { label: "All",                    value: "all" },
+  { label: "Pending",                value: "pending" },
+  { label: "Approved for Sage",      value: "sage" },
+  { label: "Approved for Marketing", value: "marketing" },
+  { label: "Flagged Concerns",       value: "concern" },
+];
+
+const EMPTY_MESSAGES: Record<ApprovalFilter, string> = {
+  all:       "No phrases extracted yet — sync and analyze some reviews first",
+  pending:   "No pending phrases",
+  sage:      "No phrases approved for Sage yet",
+  marketing: "No phrases approved for marketing yet",
+  concern:   "No phrases flagged as concerns",
+};
+
+function LanguagePhrasesSection() {
+  const utils = trpc.useUtils();
+  const [filter, setFilter] = useState<ApprovalFilter>("all");
+
+  const { data: phrases, isLoading } = trpc.reviews.listLanguagePhrases.useQuery({
+    approvalFilter: filter,
+  });
+
+  const approvePhrase = trpc.reviews.approvePhrase.useMutation({
+    onSuccess: () => utils.reviews.listLanguagePhrases.invalidate(),
+  });
+
+  return (
+    <div className="space-y-4">
+      {/* Header */}
+      <div>
+        <h2 className="text-lg font-semibold text-gray-900">Review Language</h2>
+        <p className="text-sm text-gray-500 mt-0.5">
+          Phrases extracted from your reviews. Approve for Sage responses or marketing copy.
+        </p>
+      </div>
+
+      {/* Filter tabs */}
+      <div className="flex items-center gap-2 flex-wrap">
+        {FILTER_TABS.map((tab) => (
+          <button
+            key={tab.value}
+            onClick={() => setFilter(tab.value)}
+            className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
+              filter === tab.value
+                ? "bg-gray-800 text-white border-gray-800"
+                : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Loading state */}
+      {isLoading && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="bg-gray-100 rounded-lg h-36 animate-pulse" />
+          ))}
+        </div>
+      )}
+
+      {/* Empty state */}
+      {!isLoading && (phrases ?? []).length === 0 && (
+        <div className="bg-white rounded-lg border border-gray-200 px-6 py-12 text-center">
+          <p className="text-sm text-gray-400">{EMPTY_MESSAGES[filter]}</p>
+        </div>
+      )}
+
+      {/* Phrase cards */}
+      {!isLoading && (phrases ?? []).length > 0 && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {(phrases ?? []).map((phrase: any) => (
+            <div
+              key={phrase.id}
+              className="bg-white rounded-lg border border-gray-200 p-4 flex flex-col gap-3"
+            >
+              {/* Phrase text */}
+              <p className="text-sm font-medium italic text-gray-800 leading-snug">
+                &ldquo;{phrase.phrase}&rdquo;
+              </p>
+
+              {/* Theme + meta */}
+              <div className="flex flex-wrap items-center gap-2">
+                {phrase.theme && (
+                  <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
+                    {phrase.theme.replace(/_/g, " ")}
+                  </span>
+                )}
+                <span className="text-xs text-gray-400">
+                  Mentioned {phrase.frequency_count} {phrase.frequency_count === 1 ? "time" : "times"}
+                </span>
+                {phrase.avg_rating != null && (
+                  <div className="flex gap-0.5 items-center">
+                    {[1, 2, 3, 4, 5].map((n) => (
+                      <Star
+                        key={n}
+                        size={11}
+                        className={
+                          n <= Math.round(phrase.avg_rating)
+                            ? "fill-amber-400 text-amber-400"
+                            : "fill-gray-100 text-gray-200"
+                        }
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Toggle buttons */}
+              <div className="flex items-center gap-2 mt-auto pt-1 border-t border-gray-100">
+                {/* Sage */}
+                <button
+                  onClick={() =>
+                    approvePhrase.mutate({
+                      phraseId: phrase.id,
+                      approvedForSage: !phrase.approved_for_sage,
+                    })
+                  }
+                  disabled={approvePhrase.isPending}
+                  title={phrase.approved_for_sage ? "Remove Sage approval" : "Approve for Sage"}
+                  className={`flex items-center gap-1 text-xs px-2 py-1 rounded border transition-colors disabled:opacity-50 ${
+                    phrase.approved_for_sage
+                      ? "bg-green-50 text-green-700 border-green-200 hover:bg-green-100"
+                      : "bg-white text-gray-400 border-gray-200 hover:bg-gray-50 hover:text-gray-600"
+                  }`}
+                >
+                  {phrase.approved_for_sage ? <Check size={11} /> : <Circle size={11} />}
+                  Sage
+                </button>
+
+                {/* Marketing */}
+                <button
+                  onClick={() =>
+                    approvePhrase.mutate({
+                      phraseId: phrase.id,
+                      approvedForMarketing: !phrase.approved_for_marketing,
+                    })
+                  }
+                  disabled={approvePhrase.isPending}
+                  title={phrase.approved_for_marketing ? "Remove marketing approval" : "Approve for marketing"}
+                  className={`flex items-center gap-1 text-xs px-2 py-1 rounded border transition-colors disabled:opacity-50 ${
+                    phrase.approved_for_marketing
+                      ? "bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100"
+                      : "bg-white text-gray-400 border-gray-200 hover:bg-gray-50 hover:text-gray-600"
+                  }`}
+                >
+                  {phrase.approved_for_marketing ? <Check size={11} /> : <Circle size={11} />}
+                  Marketing
+                </button>
+
+                {/* Concern */}
+                <button
+                  onClick={() =>
+                    approvePhrase.mutate({
+                      phraseId: phrase.id,
+                      flaggedAsConcern: !phrase.flagged_as_concern,
+                    })
+                  }
+                  disabled={approvePhrase.isPending}
+                  title={phrase.flagged_as_concern ? "Remove concern flag" : "Flag as concern"}
+                  className={`flex items-center gap-1 text-xs px-2 py-1 rounded border transition-colors disabled:opacity-50 ml-auto ${
+                    phrase.flagged_as_concern
+                      ? "bg-red-50 text-red-600 border-red-200 hover:bg-red-100"
+                      : "bg-white text-gray-400 border-gray-200 hover:bg-gray-50 hover:text-gray-600"
+                  }`}
+                >
+                  <Flag size={11} />
+                  {phrase.flagged_as_concern ? "Flagged" : "Flag"}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -354,6 +537,9 @@ export default function ReviewsPage() {
           </div>
         </div>
       )}
+
+      {/* Review Language */}
+      <LanguagePhrasesSection />
     </div>
   );
 }

@@ -1,10 +1,8 @@
 import { z } from "zod";
 import { router, venueProcedure } from "@/lib/trpc/server";
 import { TRPCError } from "@trpc/server";
-import Anthropic from "@anthropic-ai/sdk";
+import { callAIVision, callAI } from "@/lib/ai";
 import { nameMatchScore, daysBetween, timeProximityBonus } from "./email";
-
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 // ── TYPES ─────────────────────────────────────────────────────────────────────
 
@@ -120,20 +118,7 @@ async function checkDuplicates(
 // ── CLASSIFY IMAGE (Claude Vision) ───────────────────────────────────────────
 
 async function classifyImage(base64: string, mimeType: string): Promise<ClassifyResult> {
-  const response = await anthropic.messages.create({
-    model: "claude-sonnet-4-6",
-    max_tokens: 2000,
-    messages: [
-      {
-        role: "user",
-        content: [
-          {
-            type: "image",
-            source: { type: "base64", media_type: mimeType as any, data: base64 },
-          },
-          {
-            type: "text",
-            text: `You are extracting data from a wedding venue business screenshot. You can read tabular data, visual charts (bar charts, line graphs), and billing/contract documents.
+  const visionPrompt = `You are extracting data from a wedding venue business screenshot. You can read tabular data, visual charts (bar charts, line graphs), and billing/contract documents.
 
 Identify the screenshot type:
 - Inquiry screenshots (The Knot, WeddingWire, Instagram DMs, email) → inquiry rows
@@ -153,61 +138,39 @@ Respond with ONLY valid JSON:
   "fileType": "knot_inquiry_screenshot" | "instagram_inquiry_screenshot" | "email_inquiry_screenshot" | "review_screenshot" | "analytics_chart" | "ads_dashboard" | "google_analytics" | "social_insights" | "platform_billing" | "unknown",
   "fileTypeLabel": "human-readable label e.g. 'The Knot Billing Contract' or 'WeddingPro Impressions Chart'",
   "confidence": "high" | "medium" | "low",
-  "summary": "One sentence — e.g. 'WeddingPro billing showing $15,132.60/year for Featured listing, Oct 2025–Oct 2026' or 'WeddingPro saves chart: 587 saves in 12 months, Apr 2025–Mar 2026'",
+  "summary": "One sentence",
   "rows": [
     {
       "type": "inquiry" | "client" | "review" | "metric" | "spend" | "unknown",
       "fields": [
-        // For inquiry/client rows:
         { "field": "name_primary", "value": "...", "confidence": "high" },
         { "field": "email_primary", "value": "...", "confidence": "high" },
-        { "field": "phone_primary", "value": "...", "confidence": "medium" },
-        { "field": "event_date", "value": "YYYY-MM-DD or raw text", "confidence": "high" },
-        { "field": "guest_count_initial", "value": "...", "confidence": "medium" },
-        { "field": "raw_message", "value": "full message text", "confidence": "high" },
-        { "field": "first_touch_platform", "value": "the_knot|wedding_wire|instagram|google_ads|google_organic|referral|direct|other", "confidence": "high" },
-
-        // For review rows:
-        { "field": "review_star_rating", "value": "4.5", "confidence": "high" },
-        { "field": "review_text", "value": "...", "confidence": "high" },
-        { "field": "review_platform", "value": "google|the_knot|wedding_wire|other", "confidence": "high" },
-        { "field": "name_primary", "value": "reviewer name if visible", "confidence": "medium" },
-
-        // For metric rows (charts, analytics dashboards):
-        { "field": "metric_name", "value": "impressions|saves|visitors|leads|link_clicks|calls|clicks|cpc|ctr|roas|reviews|inquiries|bookings", "confidence": "high" },
-        { "field": "metric_value", "value": "total numeric value visible e.g. 37300 or 587 or 4364", "confidence": "high" },
-        { "field": "metric_period", "value": "e.g. last 12 months, March 2025, Apr 2025–Mar 2026", "confidence": "medium" },
-        { "field": "metric_platform", "value": "the_knot|wedding_wire|google_ads|meta|instagram|overall", "confidence": "high" },
-        { "field": "metric_comparison", "value": "change vs prior period if visible, e.g. -2% vs last 30 days", "confidence": "medium" },
-        { "field": "metric_breakdown", "value": "JSON array of monthly points e.g. [{\"label\":\"Apr\",\"value\":3000},{\"label\":\"May\",\"value\":3000}]", "confidence": "medium" },
-
-        // For spend rows (billing/contract screenshots):
-        { "field": "spend_platform", "value": "the_knot|wedding_wire|google_ads|meta|instagram|other", "confidence": "high" },
-        { "field": "spend_amount", "value": "total contract value in dollars e.g. 15132.60", "confidence": "high" },
-        { "field": "spend_period", "value": "annual|monthly|quarterly", "confidence": "high" },
+        { "field": "event_date", "value": "YYYY-MM-DD", "confidence": "high" },
+        { "field": "metric_name", "value": "impressions|saves|visitors|leads|link_clicks|calls", "confidence": "high" },
+        { "field": "metric_value", "value": "numeric total", "confidence": "high" },
+        { "field": "metric_period", "value": "e.g. last 12 months", "confidence": "medium" },
+        { "field": "metric_platform", "value": "the_knot|wedding_wire|google_ads|meta|instagram", "confidence": "high" },
+        { "field": "metric_breakdown", "value": "JSON array [{label,value}]", "confidence": "medium" },
+        { "field": "spend_platform", "value": "the_knot|wedding_wire|google_ads|meta", "confidence": "high" },
+        { "field": "spend_amount", "value": "dollars e.g. 15132.60", "confidence": "high" },
         { "field": "spend_contract_start", "value": "YYYY-MM-DD", "confidence": "high" },
         { "field": "spend_contract_end", "value": "YYYY-MM-DD", "confidence": "high" },
-        { "field": "spend_product_name", "value": "e.g. The Knot Featured All Venue DC/MD/VA Region", "confidence": "high" }
+        { "field": "spend_product_name", "value": "e.g. The Knot Featured", "confidence": "high" }
       ]
     }
   ]
 }
 
-IMPORTANT:
-- For charts showing monthly data: create ONE metric row per KPI, with metric_breakdown containing all data points as a JSON array
-- If a dashboard shows multiple KPIs (e.g. impressions page shows total + monthly breakdown), create one row for the total and include the monthly breakdown in metric_breakdown
-- For billing: one spend row per contract/product line
-- Read chart values as precisely as possible from the visual — use axis gridlines to estimate
+IMPORTANT: For charts create ONE metric row per KPI with metric_breakdown. For billing one spend row per contract. Only include fields you can actually see.`;
 
-Only include fields you can actually see.`,
-          },
-        ],
-      },
-    ],
-  });
+  const result = await callAIVision(
+    base64,
+    mimeType as 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif',
+    visionPrompt,
+    { maxTokens: 2000, taskType: "capture_classify_image" }
+  );
 
-  const text = response.content[0].type === "text" ? response.content[0].text : "{}";
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  const jsonMatch = result.text.match(/\{[\s\S]*\}/);
   if (!jsonMatch) throw new Error("No JSON in response");
 
   const parsed = JSON.parse(jsonMatch[0]);
@@ -501,13 +464,8 @@ async function classifyCSV(
   // Take first 3000 chars to avoid token overflow
   const preview = content.slice(0, 3000);
 
-  const response = await anthropic.messages.create({
-    model: "claude-sonnet-4-6",
-    max_tokens: 4000,
-    messages: [
-      {
-        role: "user",
-        content: `You are extracting data from a CSV export for a wedding venue.
+  const csvResult = await callAI(
+    `You are extracting data from a CSV export for a wedding venue.
 
 File name: ${fileName}
 CSV content (first 3000 chars):
@@ -521,39 +479,27 @@ Respond with ONLY valid JSON:
   "fileTypeLabel": "human-readable label",
   "confidence": "high" | "medium" | "low",
   "summary": "e.g. HoneyBook export with 23 bookings from 2022-2024",
-  "columnMapping": { "CSV column name": "our field name or null if irrelevant" },
   "rows": [
     {
       "type": "client" | "inquiry" | "vendor" | "unknown",
       "mapped": {
-        "name_primary": "...",
-        "name_partner": "...",
-        "email_primary": "...",
-        "phone_primary": "...",
-        "event_date": "YYYY-MM-DD",
-        "guest_count_initial": "number as string",
-        "guest_count_final": "number as string",
-        "revenue_cents": "dollars as string (e.g. 4200.00)",
-        "status": "inquiry|tour_booked|booked|planning|event_complete|archived",
-        "package": "...",
-        "first_touch_platform": "the_knot|wedding_wire|instagram|google_organic|google_ads|referral|direct|other",
-        "self_reported_source": "...",
-        "review_star_rating": "number as string",
-        "review_text": "...",
-        "vendor_name": "...",
-        "vendor_category": "..."
+        "name_primary": "...", "name_partner": "...", "email_primary": "...",
+        "phone_primary": "...", "event_date": "YYYY-MM-DD",
+        "guest_count_initial": "number as string", "revenue_cents": "dollars as string",
+        "status": "inquiry|tour_booked|toured|held|contracted|event_complete|archived|lost",
+        "package": "...", "first_touch_platform": "the_knot|wedding_wire|instagram|google_organic|google_ads|referral|direct|other",
+        "self_reported_source": "...", "review_star_rating": "number as string",
+        "review_text": "...", "vendor_name": "...", "vendor_category": "..."
       }
     }
   ]
 }
 
-Only extract what you can actually see. Normalise statuses to our values. Parse all rows from the CSV.`,
-      },
-    ],
-  });
+Only extract what you can actually see. Parse all rows from the CSV.`,
+    { maxTokens: 4000, taskType: "capture_classify_csv" }
+  );
 
-  const text = response.content[0].type === "text" ? response.content[0].text : "{}";
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  const jsonMatch = csvResult.text.match(/\{[\s\S]*\}/);
   if (!jsonMatch) throw new Error("No JSON in CSV response");
 
   const parsed = JSON.parse(jsonMatch[0]);
@@ -789,7 +735,7 @@ export const captureRouter = router({
       const result = await classifyImage(input.base64, input.mimeType);
 
       // Get venue avg revenue for anomaly checks
-      const { data: revenueData } = await ctx.supabase
+      const { data: revenueData } = await ctx.db
         .from("clients")
         .select("revenue_cents")
         .eq("venue_id", ctx.venueId)
@@ -801,7 +747,7 @@ export const captureRouter = router({
           ? revenueData.reduce((s: number, c: any) => s + c.revenue_cents, 0) / revenueData.length
           : null;
 
-      result.rows = await addAnomalies(ctx.supabase, ctx.venueId, result.rows, avgRevenue);
+      result.rows = await addAnomalies(ctx.db, ctx.venueId, result.rows, avgRevenue);
       result.totalAnomalies = result.rows.reduce((s, r) => s + r.anomalies.length, 0);
       result.blockers = result.rows.reduce(
         (s, r) => s + r.anomalies.filter((a) => a.severity === "error" || a.requiresAnswer).length,
@@ -817,7 +763,7 @@ export const captureRouter = router({
     .mutation(async ({ ctx, input }) => {
       const result = await classifyCSV(input.content, input.fileName);
 
-      const { data: revenueData } = await ctx.supabase
+      const { data: revenueData } = await ctx.db
         .from("clients")
         .select("revenue_cents")
         .eq("venue_id", ctx.venueId)
@@ -829,7 +775,7 @@ export const captureRouter = router({
           ? revenueData.reduce((s: number, c: any) => s + c.revenue_cents, 0) / revenueData.length
           : null;
 
-      result.rows = await addAnomalies(ctx.supabase, ctx.venueId, result.rows, avgRevenue);
+      result.rows = await addAnomalies(ctx.db, ctx.venueId, result.rows, avgRevenue);
       result.totalAnomalies = result.rows.reduce((s, r) => s + r.anomalies.length, 0);
       result.blockers = result.rows.reduce(
         (s, r) => s + r.anomalies.filter((a) => a.severity === "error" || a.requiresAnswer).length,
@@ -871,7 +817,7 @@ export const captureRouter = router({
               ? parseInt(row.mapped.guest_count_final)
               : null;
 
-            const { error } = await ctx.supabase.from("clients").insert({
+            const { error } = await ctx.db.from("clients").insert({
               venue_id: ctx.venueId,
               name_primary: row.mapped.name_primary ?? null,
               name_partner: row.mapped.name_partner ?? null,
@@ -889,7 +835,7 @@ export const captureRouter = router({
                 ? parseFloat(row.mapped.review_star_rating)
                 : null,
               review_text: row.mapped.review_text ?? null,
-              review_left: !!row.mapped.review_star_rating,
+              review_submitted: !!row.mapped.review_star_rating,
               review_platform: row.mapped.review_platform ?? null,
             });
 
@@ -899,7 +845,7 @@ export const captureRouter = router({
               results.inserted++;
             }
           } else if (row.type === "inquiry") {
-            const { error } = await ctx.supabase.from("inquiries").insert({
+            const { error } = await ctx.db.from("inquiries").insert({
               venue_id: ctx.venueId,
               platform: row.mapped.first_touch_platform ?? "direct",
               name_extracted: row.mapped.name_primary ?? null,
@@ -923,7 +869,7 @@ export const captureRouter = router({
               results.inserted++;
             }
           } else if (row.type === "vendor") {
-            const { error } = await ctx.supabase.from("vendors").insert({
+            const { error } = await ctx.db.from("vendors").insert({
               venue_id: ctx.venueId,
               name: row.mapped.vendor_name ?? row.mapped.name_primary ?? "Unknown",
               category: row.mapped.vendor_category ?? null,
@@ -938,7 +884,7 @@ export const captureRouter = router({
             }
           } else if (row.type === "review") {
             // Reviews go into clients table with review fields populated
-            const { error } = await ctx.supabase.from("clients").insert({
+            const { error } = await ctx.db.from("clients").insert({
               venue_id: ctx.venueId,
               name_primary: row.mapped.name_primary ?? null,
               email_primary: row.mapped.email_primary ?? null,
@@ -947,7 +893,7 @@ export const captureRouter = router({
                 ? parseFloat(row.mapped.review_star_rating)
                 : null,
               review_text: row.mapped.review_text ?? null,
-              review_left: true,
+              review_submitted: true,
               review_platform: row.mapped.review_platform ?? null,
             });
 
@@ -994,7 +940,7 @@ export const captureRouter = router({
               try { breakdown = JSON.parse(row.mapped.metric_breakdown); } catch {}
             }
 
-            const { error } = await ctx.supabase.from("platform_metrics").insert({
+            const { error } = await ctx.db.from("platform_metrics").insert({
               venue_id: ctx.venueId,
               platform: (row.mapped.metric_platform ?? "unknown").toLowerCase().replace(/\s+/g, "_"),
               metric_name: (row.mapped.metric_name ?? "unknown").toLowerCase().replace(/\s+/g, "_"),
@@ -1023,7 +969,7 @@ export const captureRouter = router({
               ? Math.round(parseFloat(row.mapped.spend_amount.replace(/[^0-9.]/g, "")) * 100)
               : null;
 
-            const { error } = await ctx.supabase.from("source_spend").insert({
+            const { error } = await ctx.db.from("source_spend").insert({
               venue_id: ctx.venueId,
               platform: (row.mapped.spend_platform ?? "unknown").toLowerCase().replace(/\s+/g, "_"),
               annual_spend_cents: amount,
@@ -1044,7 +990,7 @@ export const captureRouter = router({
             }
           } else if (row.type === "lead") {
             // Pre-inquiry funnel touch — save, storefront visit, website visit, etc.
-            const { error } = await ctx.supabase.from("leads").insert({
+            const { error } = await ctx.db.from("leads").insert({
               venue_id: ctx.venueId,
               platform: (row.mapped.lead_platform ?? "unknown").toLowerCase().replace(/\s+/g, "_"),
               touch_type: row.mapped.lead_touch_type ?? "storefront_visit",
@@ -1070,7 +1016,7 @@ export const captureRouter = router({
 
       // Fire-and-forget duplicate scan after any new clients are added
       if (results.inserted > 0) {
-        runDuplicateScan(ctx.supabase, ctx.venueId).catch(() => {});
+        runDuplicateScan(ctx.db, ctx.venueId).catch(() => {});
       }
 
       return results;
@@ -1095,11 +1041,11 @@ async function runDuplicateScan(supabase: any, venueId: string) {
         .eq("venue_id", venueId)
         .not("name", "is", null),
       supabase
-        .from("email_extractions")
-        .select("id, extracted_name, from_email, received_at, extracted_source, matched_lead_id")
+        .from("email_messages")
+        .select("id, sender_name, sender_email, received_at")
         .eq("venue_id", venueId)
-        .eq("match_status", "unmatched")
-        .not("extracted_name", "is", null),
+        .not("sender_name", "is", null)
+        .limit(200),
       supabase
         .from("matching_queue")
         .select("record_a_id, record_b_id")
@@ -1158,8 +1104,8 @@ async function runDuplicateScan(supabase: any, venueId: string) {
   const emailList = emailExtractions ?? [];
 
   for (const email of emailList) {
-    if (!email.extracted_name) continue;
-    const emailPrefix = email.extracted_name.trim().split(/\s+/)[0].toLowerCase().slice(0, 3);
+    if (!email.sender_name) continue;
+    const emailPrefix = email.sender_name.trim().split(/\s+/)[0].toLowerCase().slice(0, 3);
 
     for (const lead of leadList) {
       if (!lead.name) continue;
@@ -1169,7 +1115,7 @@ async function runDuplicateScan(supabase: any, venueId: string) {
       const pairKey = [email.id, lead.id].sort().join(":");
       if (alreadyQueued.has(pairKey)) continue;
 
-      const nScore = nameMatchScore(email.extracted_name, lead.name);
+      const nScore = nameMatchScore(email.sender_name, lead.name);
       if (nScore < 40) continue;
 
       // Time window check — hard block over 1 year
@@ -1177,7 +1123,7 @@ async function runDuplicateScan(supabase: any, venueId: string) {
       if (days !== null && days > MAX_LINK_DAYS) continue;
 
       let score = nScore;
-      const signals: string[] = [`name match: "${email.extracted_name}" ↔ "${lead.name}" (${nScore})`];
+      const signals: string[] = [`name match: "${email.sender_name}" ↔ "${lead.name}" (${nScore})`];
 
       // Time proximity
       if (days !== null) {
@@ -1186,21 +1132,11 @@ async function runDuplicateScan(supabase: any, venueId: string) {
         signals.push(`${Math.round(days)}d apart`);
       }
 
-      // Platform corroboration
-      if (
-        email.extracted_source &&
-        lead.platform &&
-        email.extracted_source.toLowerCase().replace(/\s+/g, "_") === lead.platform
-      ) {
-        score += 20;
-        signals.push(`platform corroborated: ${lead.platform}`);
-      }
-
       if (score >= 50) {
         toInsert.push({
           venue_id: venueId,
-          record_a_type: "email_extraction", record_a_id: email.id,
-          record_b_type: "lead",             record_b_id: lead.id,
+          record_a_type: "email_message", record_a_id: email.id,
+          record_b_type: "lead",          record_b_id: lead.id,
           match_score: Math.min(score, 100), signals_matched: signals, status: "pending",
         });
         alreadyQueued.add(pairKey);

@@ -27,6 +27,14 @@
     {
       "path": "/api/cron?job=sensitive_data_cleanup",
       "schedule": "0 3 * * 0"
+    },
+    {
+      "path": "/api/cron?job=weekly_insights",
+      "schedule": "0 6 * * 1"
+    },
+    {
+      "path": "/api/cron?job=post_wedding_sequence",
+      "schedule": "0 10 * * *"
     }
   ]
 }

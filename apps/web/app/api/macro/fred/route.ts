@@ -70,10 +70,10 @@ export async function POST(request: NextRequest) {
       const validRows = observations
         .filter((obs) => obs.value !== ".")
         .map((obs) => ({
-          signal_type: series.signalType,
-          period_date: obs.date,
+          series_id: series.id,
+          date: obs.date,
           value: parseFloat(obs.value),
-          geo_scope: series.geoScope,
+          region: series.geoScope,
         }));
 
       if (validRows.length === 0) {
@@ -84,7 +84,7 @@ export async function POST(request: NextRequest) {
       const { error: upsertError } = await supabase
         .from("macro_economic")
         .upsert(validRows, {
-          onConflict: "signal_type,period_date,geo_scope",
+          onConflict: "series_id,date",
         });
 
       if (upsertError) {

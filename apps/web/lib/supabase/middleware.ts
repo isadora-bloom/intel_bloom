@@ -2,6 +2,13 @@ import { createServerClient } from "@supabase/ssr";
 import { type NextRequest, NextResponse } from "next/server";
 
 export async function updateSession(request: NextRequest) {
+  const pathname = request.nextUrl.pathname;
+
+  // Skip expensive auth.getUser() for API routes — they authenticate themselves
+  if (pathname.startsWith("/api/")) {
+    return NextResponse.next({ request });
+  }
+
   let supabaseResponse = NextResponse.next({ request });
 
   const supabase = createServerClient(
@@ -28,8 +35,6 @@ export async function updateSession(request: NextRequest) {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-
-  const pathname = request.nextUrl.pathname;
 
   const isAuthRoute =
     pathname.startsWith("/login") ||
@@ -61,31 +66,8 @@ export async function updateSession(request: NextRequest) {
       !pathname.startsWith("/api/") &&
       !pathname.startsWith("/upgrade");
 
-    if (isDashboardRoute) {
-      const { data: venueData } = await supabase
-        .from("venue_users")
-        .select("venues(plan_status, trial_ends_at)")
-        .eq("user_id", user.id)
-        .limit(1)
-        .single();
-
-      const venue = (venueData?.venues as any) ?? null;
-
-      if (venue) {
-        const isTrialExpired =
-          venue.plan_status === "trial" &&
-          venue.trial_ends_at &&
-          new Date(venue.trial_ends_at) < new Date();
-
-        const isCancelled = venue.plan_status === "cancelled";
-
-        if (isTrialExpired || isCancelled) {
-          const url = request.nextUrl.clone();
-          url.pathname = "/upgrade";
-          return NextResponse.redirect(url);
-        }
-      }
-    }
+    // Plan gating placeholder — billing columns not yet in schema
+    void isDashboardRoute;
   }
 
   return supabaseResponse;

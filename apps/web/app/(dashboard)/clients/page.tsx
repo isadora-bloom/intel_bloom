@@ -9,19 +9,23 @@ import Link from "next/link";
 const STATUS_COLORS: Record<string, string> = {
   inquiry: "bg-gray-100 text-gray-600",
   tour_booked: "bg-blue-100 text-blue-700",
-  booked: "bg-indigo-100 text-indigo-700",
-  planning: "bg-purple-100 text-purple-700",
+  toured: "bg-indigo-100 text-indigo-700",
+  held: "bg-amber-100 text-amber-700",
+  contracted: "bg-purple-100 text-purple-700",
   event_complete: "bg-green-100 text-green-700",
   archived: "bg-gray-100 text-gray-400",
+  lost: "bg-red-100 text-red-600",
 };
 
 const ALL_STATUSES = [
   "inquiry",
   "tour_booked",
-  "booked",
-  "planning",
+  "toured",
+  "held",
+  "contracted",
   "event_complete",
   "archived",
+  "lost",
 ] as const;
 type ClientStatus = typeof ALL_STATUSES[number];
 
@@ -201,8 +205,15 @@ export default function ClientsPage() {
     },
   });
 
+  const archiveMutation = trpc.clients.archiveWithReason.useMutation({
+    onSuccess: () => {
+      utils.clients.list.invalidate();
+      setPendingArchive(null);
+    },
+  });
+
   function handleStatusChange(clientId: string, newStatus: ClientStatus) {
-    if (newStatus === "archived") {
+    if (newStatus === "lost" || newStatus === "archived") {
       const client = data?.clients.find((c: any) => c.id === clientId);
       const displayName = client
         ? [client.name_primary, client.name_partner].filter(Boolean).join(" & ")
@@ -215,17 +226,16 @@ export default function ClientsPage() {
 
   function handleLostReasonConfirm(reason: string | null, note: string) {
     if (!pendingArchive) return;
-    updateMutation.mutate({
+    archiveMutation.mutate({
       id: pendingArchive.id,
-      status: "archived",
-      lostReason: reason as any ?? "unknown",
-      lostReasonNote: note || null,
+      reasonCategory: reason,
+      reasonDetail: note || undefined,
     });
   }
 
   function handleLostReasonSkip() {
     if (!pendingArchive) return;
-    updateMutation.mutate({ id: pendingArchive.id, status: "archived" });
+    archiveMutation.mutate({ id: pendingArchive.id, reasonCategory: null });
   }
 
   return (

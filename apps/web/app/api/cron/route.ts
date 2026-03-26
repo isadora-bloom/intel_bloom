@@ -62,6 +62,50 @@ async function handleCron(request: NextRequest) {
         return NextResponse.json({ success: true, job, log });
       }
 
+      case "weekly_insights": {
+        // Cache AI-generated weekly insights for Monday morning screen
+        const { createServiceClient } = await import("@/lib/supabase/server");
+        const { callAIJson } = await import("@/lib/ai");
+        const supabase = createServiceClient();
+        const { data: venues } = await supabase
+          .from("venues")
+          .select("id")
+          .eq("onboarding_complete", true);
+
+        for (const venue of venues ?? []) {
+          try {
+            // Gather venue summary data
+            const [{ count: inqCount }, { count: tourCount }, { count: bookCount }] = await Promise.all([
+              supabase.from("inquiries").select("id", { count: "exact", head: true }).eq("venue_id", venue.id).gte("received_at", new Date(Date.now() - 7 * 86400000).toISOString()),
+              supabase.from("tours").select("id", { count: "exact", head: true }).eq("venue_id", venue.id).eq("completed", true).gte("scheduled_at", new Date(Date.now() - 7 * 86400000).toISOString()),
+              supabase.from("clients").select("id", { count: "exact", head: true }).eq("venue_id", venue.id).gte("contracted_at", new Date(Date.now() - 7 * 86400000).toISOString()),
+            ]);
+
+            const summary = `This week: ${inqCount ?? 0} inquiries, ${tourCount ?? 0} tours completed, ${bookCount ?? 0} new bookings.`;
+
+            const insights = await callAIJson<{ insights: Array<{ headline: string; body: string; sentiment: string }> }>(
+              `Given this wedding venue's data for the past 7 days:\n${summary}\n\nWrite 3-4 plain English insights a venue owner would find valuable. No jargon. Every insight should suggest an action.\n\nReturn JSON: { "insights": [{ "headline": "...", "body": "...", "sentiment": "positive|neutral|caution" }] }`,
+              { venueId: venue.id, taskType: "weekly_insights", maxTokens: 1000 }
+            );
+
+            await supabase.from("weekly_insights").insert({
+              venue_id: venue.id,
+              insights: insights,
+              generated_by: "cron",
+            });
+          } catch (err) {
+            console.error(`Weekly insights failed for venue ${venue.id}:`, err);
+          }
+        }
+        break;
+      }
+
+      case "post_wedding_sequence": {
+        const { runPostWeddingSequenceAllVenues } = await import("@bloom/ingestion/post-wedding-sequence");
+        await runPostWeddingSequenceAllVenues();
+        break;
+      }
+
       // ── MONTHLY ──
       case "fred_economic_signals": {
         const { ingestFredSeries } = await import("@bloom/ingestion/fred/ingest-economic");

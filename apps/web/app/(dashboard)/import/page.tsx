@@ -122,18 +122,20 @@ function parseGuestCount(val: string): number | undefined {
   return approx ? parseInt(approx[0], 10) : undefined;
 }
 
-function mapHbStatus(raw: string): "inquiry" | "tour_booked" | "booked" | "planning" | "event_complete" | "archived" {
+function mapHbStatus(raw: string): "inquiry" | "tour_booked" | "toured" | "held" | "contracted" | "event_complete" | "archived" | "lost" {
   const s = raw.toLowerCase().trim();
   // Boolean tour-booked columns (Yes/No/TRUE/FALSE)
   if (s === "yes" || s === "true") return "tour_booked";
   if (s === "no" || s === "false") return "archived";
   // Named statuses
   if (s.includes("lead") || s.includes("inquiry") || s.includes("new")) return "inquiry";
-  if (s.includes("tour")) return "tour_booked";
-  if (s.includes("active") || s.includes("book") || s.includes("contract")) return "booked";
-  if (s.includes("plan")) return "planning";
+  if (s.includes("tour booked") || s.includes("book a tour")) return "tour_booked";
+  if (s.includes("tour")) return "toured";
+  if (s.includes("hold") || s.includes("held")) return "held";
+  if (s.includes("contract") || s.includes("book") || s.includes("active")) return "contracted";
   if (s.includes("complet") || s.includes("done") || s.includes("past")) return "event_complete";
-  if (s.includes("archive") || s.includes("cancel") || s.includes("lost")) return "archived";
+  if (s.includes("lost")) return "lost";
+  if (s.includes("archive") || s.includes("cancel")) return "archived";
   return "inquiry";
 }
 
@@ -338,7 +340,7 @@ export default function ImportPage() {
           selfReportedSource: get(primary, "source"),
           guestCountInitial:  parseGuestCount(primary[mapping.guest_count] ?? ""),
           package:            get(primary, "package"),
-          inquiryDate:        parseEventDate(primary[mapping.inquiry_date] ?? ""),
+          inquiredAt:         parseEventDate(primary[mapping.inquiry_date] ?? ""),
           status:             rawStatus ? mapHbStatus(rawStatus) : "inquiry",
         });
 
@@ -355,7 +357,7 @@ export default function ImportPage() {
             selfReportedSource: get(row, "source"),
             guestCountInitial:  parseGuestCount(row[mapping.guest_count] ?? ""),
             package:            get(row, "package"),
-            inquiryDate:        parseEventDate(row[mapping.inquiry_date] ?? ""),
+            inquiredAt:         parseEventDate(row[mapping.inquiry_date] ?? ""),
             status:             rs ? mapHbStatus(rs) : "inquiry",
           });
         }
@@ -375,7 +377,7 @@ export default function ImportPage() {
           selfReportedSource: get(row, "source"),
           guestCountInitial:  parseGuestCount(row[mapping.guest_count] ?? ""),
           package:            get(row, "package"),
-          inquiryDate:        parseEventDate(row[mapping.inquiry_date] ?? ""),
+          inquiredAt:         parseEventDate(row[mapping.inquiry_date] ?? ""),
           status:             rs ? mapHbStatus(rs) : "inquiry",
         });
       }
@@ -399,7 +401,7 @@ export default function ImportPage() {
           selfReportedSource: get(row, "source"),
           guestCountInitial:  parseGuestCount(row[mapping.guest_count] ?? ""),
           package:            get(row, "package"),
-          inquiryDate:        parseEventDate(row[mapping.inquiry_date] ?? ""),
+          inquiredAt:         parseEventDate(row[mapping.inquiry_date] ?? ""),
           status:             rs ? mapHbStatus(rs) : "inquiry",
         } as Parameters<typeof upsertMutation.mutateAsync>[0];
       })

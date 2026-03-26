@@ -1,4 +1,4 @@
-import { router } from "@/lib/trpc/server";
+import { router, publicProcedure } from "@/lib/trpc/server";
 import { venuesRouter } from "./routers/venues";
 import { clientsRouter } from "./routers/clients";
 import { inquiriesRouter } from "./routers/inquiries";
@@ -15,8 +15,19 @@ import { calendlyRouter } from "./routers/calendly";
 import { touchpointsRouter } from "./routers/touchpoints";
 import { socialRouter } from "./routers/social";
 import { reviewsRouter } from "./routers/reviews";
+import { campaignsRouter } from "./routers/campaigns";
+import { lostDealsRouter } from "./routers/lost-deals";
+import { enterpriseRouter } from "./routers/enterprise";
+import { anomaliesRouter } from "./routers/anomalies";
+import { forecastsRouter } from "./routers/forecasts";
 
 export const appRouter = router({
+  debug: publicProcedure.query(async ({ ctx }) => ({
+    userId: ctx.user?.id ?? null,
+    venueId: ctx.venueId,
+    hasSession: !!ctx.user,
+    appMetaVenueId: (ctx.user?.app_metadata?.venue_id as string | undefined) ?? null,
+  })),
   venues: venuesRouter,
   clients: clientsRouter,
   inquiries: inquiriesRouter,
@@ -33,6 +44,11 @@ export const appRouter = router({
   touchpoints: touchpointsRouter,
   social: socialRouter,
   reviews: reviewsRouter,
+  campaigns: campaignsRouter,
+  lostDeals: lostDealsRouter,
+  enterprise: enterpriseRouter,
+  anomalies: anomaliesRouter,
+  forecasts: forecastsRouter,
 });
 
 export type AppRouter = typeof appRouter;

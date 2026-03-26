@@ -32,7 +32,7 @@ export default function ClientRecordPage({ params }: { params: Promise<{ id: str
     return <div className="p-8 text-red-500">Client not found</div>;
   }
 
-  const { client, touchpoints, planningEvents, vendors, uploads } = data;
+  const { client, touchpoints, planningEvents, vendors, uploads, referralsGiven, referralsReceived, weatherForecast } = data;
 
   return (
     <div className="max-w-5xl">
@@ -110,7 +110,87 @@ export default function ClientRecordPage({ params }: { params: Promise<{ id: str
         <PlanningTab client={client} planningEvents={planningEvents} uploads={uploads} />
       )}
       {activeTab === "event" && (
-        <EventTab client={client} vendors={vendors} />
+        <div className="space-y-4">
+          <EventTab client={client} vendors={vendors} />
+
+          {/* Weather forecast for event date */}
+          {weatherForecast && (
+            <Section title="Event day weather forecast">
+              <p className="text-sm text-gray-600">
+                Forecast for {client.event_date ? format(new Date(client.event_date), "MMMM d, yyyy") : "event date"}
+                <span className="text-xs text-gray-400 ml-2">
+                  (fetched {format(new Date(weatherForecast.fetched_at), "MMM d")})
+                </span>
+              </p>
+              {weatherForecast.forecast_data && (
+                <div className="grid grid-cols-3 gap-3 mt-2 text-sm">
+                  <div className="bg-blue-50 rounded p-2">
+                    <p className="text-xs text-blue-500">Temperature</p>
+                    <p className="font-medium text-blue-800">
+                      {(weatherForecast.forecast_data as any)?.temp_high_f ?? "—"}°F high
+                    </p>
+                  </div>
+                  <div className="bg-gray-50 rounded p-2">
+                    <p className="text-xs text-gray-500">Rain chance</p>
+                    <p className="font-medium text-gray-800">
+                      {(weatherForecast.forecast_data as any)?.precip_probability ?? "—"}%
+                    </p>
+                  </div>
+                  <div className="bg-green-50 rounded p-2">
+                    <p className="text-xs text-green-500">Conditions</p>
+                    <p className="font-medium text-green-800">
+                      {(weatherForecast.forecast_data as any)?.conditions ?? "—"}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </Section>
+          )}
+
+          {/* Referrals */}
+          {((referralsGiven?.length ?? 0) > 0 || (referralsReceived?.length ?? 0) > 0) && (
+            <Section title="Referrals">
+              {(referralsGiven?.length ?? 0) > 0 && (
+                <div className="mb-3">
+                  <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
+                    Referred others ({referralsGiven?.length})
+                  </p>
+                  {referralsGiven?.map((r: any) => (
+                    <div key={r.id} className="flex items-center justify-between py-1.5 text-sm border-b border-gray-50">
+                      <span className="text-gray-600">
+                        {r.referred_client_id ? (
+                          <Link href={`/clients/${r.referred_client_id}`} className="text-blue-600 hover:underline">
+                            View referred client
+                          </Link>
+                        ) : "Pending match"}
+                      </span>
+                      <span className={`text-xs px-1.5 py-0.5 rounded-full ${r.converted ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>
+                        {r.converted ? "Converted" : "Pending"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {(referralsReceived?.length ?? 0) > 0 && (
+                <div>
+                  <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
+                    Referred by
+                  </p>
+                  {referralsReceived?.map((r: any) => (
+                    <div key={r.id} className="text-sm text-gray-600 py-1">
+                      {r.referring_client_id ? (
+                        <Link href={`/clients/${r.referring_client_id}`} className="text-blue-600 hover:underline">
+                          View referrer
+                        </Link>
+                      ) : "Unknown referrer"}
+                      <span className="text-xs text-gray-400 ml-2">via {r.source}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Section>
+          )}
+        </div>
       )}
       {activeTab === "reputation" && (
         <ReputationTab client={client} onUpdate={() => utils.clients.getById.invalidate({ id })} />
@@ -308,7 +388,7 @@ function StarPicker({ value, onChange }: { value: number | null; onChange: (v: n
 function ReputationTab({ client, onUpdate }: { client: any; onUpdate: () => void }) {
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({
-    reviewLeft: client.review_left ?? false,
+    reviewSubmitted: client.review_submitted ?? false,
     reviewPlatform: client.review_platform ?? "",
     reviewStarRating: client.review_star_rating ?? null as number | null,
     reviewText: client.review_text ?? "",
@@ -322,7 +402,7 @@ function ReputationTab({ client, onUpdate }: { client: any; onUpdate: () => void
   function handleSave() {
     update.mutate({
       id: client.id,
-      reviewLeft: form.reviewLeft,
+      reviewSubmitted: form.reviewSubmitted,
       reviewPlatform: form.reviewPlatform || undefined,
       reviewStarRating: form.reviewStarRating ?? undefined,
       reviewText: form.reviewText || undefined,
@@ -332,7 +412,7 @@ function ReputationTab({ client, onUpdate }: { client: any; onUpdate: () => void
 
   function handleCancel() {
     setForm({
-      reviewLeft: client.review_left ?? false,
+      reviewSubmitted: client.review_submitted ?? false,
       reviewPlatform: client.review_platform ?? "",
       reviewStarRating: client.review_star_rating ?? null,
       reviewText: client.review_text ?? "",
@@ -379,14 +459,14 @@ function ReputationTab({ client, onUpdate }: { client: any; onUpdate: () => void
               <label className="text-sm text-gray-500">Left a review?</label>
               <button
                 type="button"
-                onClick={() => setForm((f) => ({ ...f, reviewLeft: !f.reviewLeft }))}
+                onClick={() => setForm((f) => ({ ...f, reviewSubmitted: !f.reviewSubmitted }))}
                 className={`relative inline-flex h-5 w-9 rounded-full transition-colors ${
-                  form.reviewLeft ? "bg-blue-600" : "bg-gray-200"
+                  form.reviewSubmitted ? "bg-blue-600" : "bg-gray-200"
                 }`}
               >
                 <span
                   className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${
-                    form.reviewLeft ? "translate-x-4" : "translate-x-0"
+                    form.reviewSubmitted ? "translate-x-4" : "translate-x-0"
                   }`}
                 />
               </button>
@@ -443,7 +523,7 @@ function ReputationTab({ client, onUpdate }: { client: any; onUpdate: () => void
         ) : (
           <div className="space-y-0">
             {/* Read view */}
-            {client.review_left === true && client.review_star_rating && (
+            {client.review_submitted === true && client.review_star_rating && (
               <div className="flex items-center gap-2 pb-3 mb-3 border-b border-gray-100">
                 <div className="flex gap-0.5">
                   {[1, 2, 3, 4, 5].map((n) => (
@@ -459,10 +539,10 @@ function ReputationTab({ client, onUpdate }: { client: any; onUpdate: () => void
                 )}
               </div>
             )}
-            <Row label="Left review" value={client.review_left ? "Yes" : client.review_left === false ? "No" : null} />
+            <Row label="Left review" value={client.review_submitted ? "Yes" : client.review_submitted === false ? "No" : null} />
             <Row label="Platform" value={client.review_platform} />
             <Row label="Referrals generated" value={client.referrals_generated?.toString()} />
-            {!client.review_left && !client.review_star_rating && (
+            {!client.review_submitted && !client.review_star_rating && (
               <p className="text-sm text-gray-400 pt-1">No review logged yet. Click Edit to add one.</p>
             )}
           </div>

@@ -12,11 +12,12 @@ export const matchingRouter = router({
       offset: z.number().int().default(0),
     }).optional())
     .query(async ({ ctx, input }) => {
-      let query = ctx.supabase
+      // Order by `confidence` — the actual column name in matching_queue schema
+      let query = ctx.db
         .from("matching_queue")
         .select("*", { count: "exact" })
         .eq("venue_id", ctx.venueId)
-        .order("match_score", { ascending: false })
+        .order("confidence", { ascending: false })
         .range(input?.offset ?? 0, (input?.offset ?? 0) + (input?.limit ?? 20) - 1);
 
       const status = input?.status ?? "pending";
@@ -27,12 +28,12 @@ export const matchingRouter = router({
       const { data, error, count } = await query;
       if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
 
-      // Fetch both records for each queue item
+      // Fetch both records for each queue item so the UI can render them
       const enriched = await Promise.all(
         (data ?? []).map(async (item) => {
           const [recordA, recordB] = await Promise.all([
-            fetchRecord(ctx.supabase, item.record_a_type, item.record_a_id, ctx.venueId),
-            fetchRecord(ctx.supabase, item.record_b_type, item.record_b_id, ctx.venueId),
+            fetchRecord(ctx.db, item.record_a_type, item.record_a_id, ctx.venueId),
+            fetchRecord(ctx.db, item.record_b_type, item.record_b_id, ctx.venueId),
           ]);
           return { ...item, recordA, recordB };
         })
@@ -41,11 +42,11 @@ export const matchingRouter = router({
       return { items: enriched, total: count ?? 0 };
     }),
 
-  // Confirm a match
+  // Confirm a match — links inquiry→client, marks queue item resolved
   confirm: venueProcedure
     .input(z.object({ queueItemId: z.string().uuid() }))
     .mutation(async ({ ctx, input }) => {
-      const { data: item, error: fetchErr } = await ctx.supabase
+      const { data: item, error: fetchErr } = await ctx.db
         .from("matching_queue")
         .select("*")
         .eq("id", input.queueItemId)
@@ -54,26 +55,26 @@ export const matchingRouter = router({
 
       if (fetchErr) throw new TRPCError({ code: "NOT_FOUND" });
 
-      // Apply the match
+      // Apply the match — support inquiry→client direction
       if (item.record_a_type === "inquiry" && item.record_b_type === "client") {
-        await ctx.supabase
+        await ctx.db
           .from("inquiries")
           .update({
             matched_client_id: item.record_b_id,
-            match_confidence: item.match_score,
+            match_confidence: item.confidence,   // correct column: confidence
             match_status: "human_confirmed",
           })
           .eq("id", item.record_a_id)
           .eq("venue_id", ctx.venueId);
       }
 
-      // Update queue status
-      const { error } = await ctx.supabase
+      // Mark queue item resolved — use resolved_by / resolved_at (schema columns)
+      const { error } = await ctx.db
         .from("matching_queue")
         .update({
           status: "confirmed",
-          reviewed_by: ctx.user.id,
-          reviewed_at: new Date().toISOString(),
+          resolved_by: ctx.user.id,
+          resolved_at: new Date().toISOString(),
         })
         .eq("id", input.queueItemId);
 
@@ -85,12 +86,12 @@ export const matchingRouter = router({
   reject: venueProcedure
     .input(z.object({ queueItemId: z.string().uuid() }))
     .mutation(async ({ ctx, input }) => {
-      const { error } = await ctx.supabase
+      const { error } = await ctx.db
         .from("matching_queue")
         .update({
           status: "rejected",
-          reviewed_by: ctx.user.id,
-          reviewed_at: new Date().toISOString(),
+          resolved_by: ctx.user.id,
+          resolved_at: new Date().toISOString(),
         })
         .eq("id", input.queueItemId)
         .eq("venue_id", ctx.venueId);
@@ -99,16 +100,16 @@ export const matchingRouter = router({
       return { success: true };
     }),
 
-  // Mark as unsure
+  // Mark as unsure (defer for later review)
   flagUnsure: venueProcedure
     .input(z.object({ queueItemId: z.string().uuid() }))
     .mutation(async ({ ctx, input }) => {
-      const { error } = await ctx.supabase
+      const { error } = await ctx.db
         .from("matching_queue")
         .update({
           status: "unsure",
-          reviewed_by: ctx.user.id,
-          reviewed_at: new Date().toISOString(),
+          resolved_by: ctx.user.id,
+          resolved_at: new Date().toISOString(),
         })
         .eq("id", input.queueItemId)
         .eq("venue_id", ctx.venueId);
@@ -119,7 +120,7 @@ export const matchingRouter = router({
 
   // Count of pending items (for sidebar badge)
   pendingCount: venueProcedure.query(async ({ ctx }) => {
-    const { count } = await ctx.supabase
+    const { count } = await ctx.db
       .from("matching_queue")
       .select("id", { count: "exact", head: true })
       .eq("venue_id", ctx.venueId)
@@ -127,28 +128,21 @@ export const matchingRouter = router({
     return { count: count ?? 0 };
   }),
 
-  // Run a full matching pass for this venue: auto-match at 90+, queue 60-89 for review
+  // Run a full matching pass: auto-match at confidence ≥90, queue 60-89 for review
   runPass: venueProcedure.mutation(async ({ ctx }) => {
     const { autoMatched, queued } = await runMatchingPass(ctx.venueId);
     return { autoMatched, queued };
   }),
 
-  // Scan the whole venue's data for likely duplicates and queue them
+  // Scan venue data for likely client duplicates and queue them for review
   scanDuplicates: venueProcedure.mutation(async ({ ctx }) => {
-    const [{ data: clients }, { data: platformMetrics }] = await Promise.all([
-      ctx.supabase
-        .from("clients")
-        .select("id, name_primary, email_primary, event_date, status")
-        .eq("venue_id", ctx.venueId),
-      ctx.supabase
-        .from("platform_metrics")
-        .select("id, platform, metric_name, period_start, period_end, metric_value, captured_at")
-        .eq("venue_id", ctx.venueId)
-        .order("captured_at", { ascending: false }),
-    ]);
+    const { data: clients } = await ctx.db
+      .from("clients")
+      .select("id, name_primary, email_primary, event_date, status")
+      .eq("venue_id", ctx.venueId);
 
-    // Fetch already-queued pairs so we don't re-queue
-    const { data: existing } = await ctx.supabase
+    // Fetch already-queued pairs so we don't re-queue the same pair
+    const { data: existing } = await ctx.db
       .from("matching_queue")
       .select("record_a_id, record_b_id")
       .eq("venue_id", ctx.venueId)
@@ -158,9 +152,19 @@ export const matchingRouter = router({
       (existing ?? []).map((e) => [e.record_a_id, e.record_b_id].sort().join(":"))
     );
 
-    const toInsert: any[] = [];
+    const toInsert: {
+      venue_id: string;
+      record_a_type: string;
+      record_a_id: string;
+      record_b_type: string;
+      record_b_id: string;
+      confidence: number;          // schema column is `confidence`, not `match_score`
+      signals_matched: string[];   // stored as JSONB
+      signals_unmatched: string[];
+      status: string;
+    }[] = [];
 
-    // ── CLIENT DEDUPLICATION ────────────────────────────────────────────────
+    // CLIENT DEDUPLICATION — compare all pairs
     const clientList = clients ?? [];
     for (let i = 0; i < clientList.length; i++) {
       for (let j = i + 1; j < clientList.length; j++) {
@@ -205,8 +209,9 @@ export const matchingRouter = router({
             record_a_id: a.id,
             record_b_type: "client",
             record_b_id: b.id,
-            match_score: score,
+            confidence: score,       // correct column name
             signals_matched: signals,
+            signals_unmatched: [],
             status: "pending",
           });
           alreadyQueued.add(pairKey);
@@ -214,56 +219,8 @@ export const matchingRouter = router({
       }
     }
 
-    // ── PLATFORM METRIC DEDUPLICATION ──────────────────────────────────────
-    // Group by platform + metric_name and flag if multiple rows have overlapping periods
-    const metricGroups = new Map<string, typeof platformMetrics extends (infer T)[] | null ? T[] : never[]>();
-    for (const m of platformMetrics ?? []) {
-      const key = `${m.platform}:${m.metric_name}`;
-      if (!metricGroups.has(key)) metricGroups.set(key, []);
-      metricGroups.get(key)!.push(m as any);
-    }
-
-    for (const [, rows] of metricGroups) {
-      if (rows.length < 2) continue;
-      // Compare each pair for overlapping periods
-      for (let i = 0; i < rows.length; i++) {
-        for (let j = i + 1; j < rows.length; j++) {
-          const a = rows[i] as any;
-          const b = rows[j] as any;
-          const pairKey = [a.id, b.id].sort().join(":");
-          if (alreadyQueued.has(pairKey)) continue;
-
-          // Overlapping date ranges
-          const aStart = a.period_start ? new Date(a.period_start) : null;
-          const aEnd = a.period_end ? new Date(a.period_end) : null;
-          const bStart = b.period_start ? new Date(b.period_start) : null;
-          const bEnd = b.period_end ? new Date(b.period_end) : null;
-
-          const overlaps =
-            aStart && aEnd && bStart && bEnd &&
-            aStart <= bEnd && bStart <= aEnd;
-
-          if (overlaps) {
-            const valueDiff = Math.abs((a.metric_value ?? 0) - (b.metric_value ?? 0));
-            const score = valueDiff < 5 ? 90 : 60; // same value = almost certainly duplicate
-            toInsert.push({
-              venue_id: ctx.venueId,
-              record_a_type: "platform_metric",
-              record_a_id: a.id,
-              record_b_type: "platform_metric",
-              record_b_id: b.id,
-              match_score: score,
-              signals_matched: [`duplicate ${a.platform} ${a.metric_name} for overlapping period`],
-              status: "pending",
-            });
-            alreadyQueued.add(pairKey);
-          }
-        }
-      }
-    }
-
     if (toInsert.length > 0) {
-      await ctx.supabase.from("matching_queue").insert(toInsert);
+      await ctx.db.from("matching_queue").insert(toInsert);
     }
 
     return { found: toInsert.length };
