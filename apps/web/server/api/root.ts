@@ -20,6 +20,7 @@ import { lostDealsRouter } from "./routers/lost-deals";
 import { enterpriseRouter } from "./routers/enterprise";
 import { anomaliesRouter } from "./routers/anomalies";
 import { forecastsRouter } from "./routers/forecasts";
+import { trendRecommendationsRouter } from "./routers/trend-recommendations";
 
 export const appRouter = router({
   debug: publicProcedure.query(async ({ ctx }) => ({
@@ -49,6 +50,7 @@ export const appRouter = router({
   enterprise: enterpriseRouter,
   anomalies: anomaliesRouter,
   forecasts: forecastsRouter,
+  trendRecs: trendRecommendationsRouter,
 });
 
 export type AppRouter = typeof appRouter;

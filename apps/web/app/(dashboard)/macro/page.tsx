@@ -35,6 +35,8 @@ export default function MacroPage() {
   const { data: trends }     = trpc.macro.getSearchTrends.useQuery();
   const { data: weatherData }= trpc.macro.getWeatherSeasonality.useQuery();
   const { data: competitors }= trpc.macro.getCompetitors.useQuery();
+  const { data: trendRecs }  = trpc.trendRecs.getRecommendations.useQuery();
+  const { data: positioning }= trpc.trendRecs.getSuggestedPositioning.useQuery();
 
   // Sentiment chart: last 24 months
   const sentimentChart = (sentiment ?? [])
@@ -53,6 +55,99 @@ export default function MacroPage() {
       <h1 className="text-2xl font-semibold text-gray-900">Market Pulse</h1>
 
       <MarketPulseCard pulse={pulse as any} />
+
+      {/* ── TREND RECOMMENDATIONS ── */}
+      {trendRecs && trendRecs.recommendations.length > 0 && (
+        <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-4">
+          <div>
+            <h2 className="text-base font-semibold text-gray-900 mb-0.5">Actionable recommendations</h2>
+            <p className="text-xs text-gray-400">
+              Based on search trends in {trendRecs.metro} and your review language. Update your positioning to match what couples are searching for.
+            </p>
+          </div>
+          <div className="space-y-3">
+            {trendRecs.recommendations.map((rec: any, i: number) => (
+              <div
+                key={i}
+                className={`rounded-lg border px-4 py-3 ${
+                  rec.priority === "high"
+                    ? "border-blue-200 bg-blue-50"
+                    : rec.priority === "medium"
+                    ? "border-gray-200 bg-white"
+                    : "border-gray-100 bg-gray-50"
+                }`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full uppercase ${
+                        rec.type === "website" ? "bg-purple-100 text-purple-700" :
+                        rec.type === "gallery" ? "bg-pink-100 text-pink-700" :
+                        rec.type === "social" ? "bg-blue-100 text-blue-700" :
+                        rec.type === "pricing" ? "bg-green-100 text-green-700" :
+                        "bg-gray-100 text-gray-600"
+                      }`}>{rec.type}</span>
+                      {rec.direction === "rising" && (
+                        <span className="text-xs text-green-600 font-medium">↑ {rec.changePct}%</span>
+                      )}
+                      {rec.direction === "falling" && (
+                        <span className="text-xs text-red-500 font-medium">↓ {Math.abs(rec.changePct)}%</span>
+                      )}
+                    </div>
+                    <p className="text-sm font-medium text-gray-900">{rec.headline}</p>
+                    <p className="text-xs text-gray-500 mt-1 leading-relaxed">{rec.body}</p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── SUGGESTED POSITIONING ── */}
+      {positioning && (
+        <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-4">
+          <div>
+            <h2 className="text-base font-semibold text-gray-900 mb-0.5">Suggested website positioning</h2>
+            <p className="text-xs text-gray-400">
+              AI-generated based on what your couples actually praise in reviews + what new couples are searching for.
+              These are suggestions — you decide what fits your brand.
+            </p>
+          </div>
+
+          <div className="bg-gray-50 rounded-lg p-4 space-y-2">
+            <p className="text-lg font-semibold text-gray-900">{positioning.suggestedHeadline}</p>
+            <p className="text-sm text-gray-600">{positioning.suggestedSubheadline}</p>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Gallery priority order</p>
+              <ol className="space-y-1">
+                {positioning.galleryOrder.map((item: string, i: number) => (
+                  <li key={i} className="text-sm text-gray-700 flex items-center gap-2">
+                    <span className="text-xs bg-gray-200 rounded-full w-5 h-5 flex items-center justify-center text-gray-600 font-medium flex-shrink-0">{i + 1}</span>
+                    {item}
+                  </li>
+                ))}
+              </ol>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Social content ideas</p>
+              <ul className="space-y-1.5">
+                {positioning.socialContentIdeas.map((idea: string, i: number) => (
+                  <li key={i} className="text-sm text-gray-700 flex items-start gap-2">
+                    <span className="text-blue-400 flex-shrink-0 mt-1">•</span>
+                    {idea}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+
+          <p className="text-xs text-gray-400 italic">{positioning.reasoning}</p>
+        </div>
+      )}
 
       {/* ── GOOGLE TRENDS ── */}
       {trends && (
