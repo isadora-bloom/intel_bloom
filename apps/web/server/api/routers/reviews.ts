@@ -126,7 +126,7 @@ export const reviewsRouter = router({
     .query(async ({ ctx, input }) => {
       let query = ctx.db
         .from("reviews")
-        .select("*, matched_client:clients(id, name_primary, name_partner, event_date)", { count: "exact" })
+        .select("*, matched_client:clients!matched_client_id(id, name_primary, name_partner, event_date)", { count: "exact" })
         .eq("venue_id", ctx.venueId)
         .order("review_date", { ascending: false, nullsFirst: false })
         .range(input.offset, input.offset + input.limit - 1);
