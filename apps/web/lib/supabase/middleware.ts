@@ -1,8 +1,26 @@
 import { createServerClient } from "@supabase/ssr";
 import { type NextRequest, NextResponse } from "next/server";
+import { DEMO_COOKIE, isDemoPath, parseDemoCookie } from "@/lib/demo";
 
 export async function updateSession(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
+
+  // ── Demo mode: allow /demo page through without auth ──────────────────
+  if (isDemoPath(pathname)) {
+    return NextResponse.next({ request });
+  }
+
+  // ── Demo mode: if bloom_demo cookie is present, skip auth ─────────────
+  const demoCookie = request.cookies.get(DEMO_COOKIE)?.value;
+  const demoSession = parseDemoCookie(demoCookie);
+  if (demoSession) {
+    // Demo user browsing dashboard pages — let them through.
+    // tRPC context will detect the cookie and inject demo venueId/role.
+    // For API routes, the demo cookie is passed along for tRPC to read.
+    return NextResponse.next({ request });
+  }
+
+  // ── Normal auth flow ──────────────────────────────────────────────────
 
   let supabaseResponse = NextResponse.next({ request });
 

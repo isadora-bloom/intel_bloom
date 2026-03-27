@@ -181,6 +181,7 @@ const PAGE_SIZE = 100;
 export default function ClientsPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [coordinatorFilter, setCoordinatorFilter] = useState<string>("all");
   const [page, setPage] = useState(0);
 
   // Lost reason modal state
@@ -191,9 +192,13 @@ export default function ClientsPage() {
 
   const utils = trpc.useUtils();
 
+  // Fetch distinct coordinators for the filter dropdown
+  const { data: coordinators } = trpc.clients.getCoordinators.useQuery();
+
   const { data, isLoading } = trpc.clients.list.useQuery({
     search: search || undefined,
     status: statusFilter !== "all" ? (statusFilter as ClientStatus) : undefined,
+    coordinator: coordinatorFilter !== "all" ? coordinatorFilter : undefined,
     limit: PAGE_SIZE,
     offset: page * PAGE_SIZE,
   });
@@ -301,6 +306,19 @@ export default function ClientsPage() {
             </button>
           ))}
         </div>
+        {/* Coordinator filter — only shown when multiple coordinators exist */}
+        {coordinators && coordinators.length > 1 && (
+          <select
+            value={coordinatorFilter}
+            onChange={(e) => { setCoordinatorFilter(e.target.value); setPage(0); }}
+            className="border border-gray-300 rounded-md px-2.5 py-2 text-sm bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="all">All coordinators</option>
+            {coordinators.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+        )}
       </div>
 
       {/* Table */}

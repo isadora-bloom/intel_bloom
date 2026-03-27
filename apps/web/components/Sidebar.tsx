@@ -32,6 +32,7 @@ import { useRouter } from "next/navigation";
 import { trpc } from "@/lib/trpc/client";
 import { useState } from "react";
 import NotificationBell from "./NotificationBell";
+import VenueSwitcher from "./VenueSwitcher";
 
 type NavItem = { href: string; label: string; icon: React.ElementType; badge?: boolean };
 type NavGroup = { label: string | null; items: NavItem[] };
@@ -196,13 +197,16 @@ export default function Sidebar() {
               </button>
             </div>
 
-            <nav className="flex-1 overflow-y-auto py-4 px-3">
-              <NavLinks
-                pathname={pathname}
-                matchingCount={matchingCount}
-                anomalyCount={anomalyCount}
-                onNavigate={() => setMobileOpen(false)}
-              />
+            <nav className="flex-1 overflow-y-auto py-4">
+              <VenueSwitcher />
+              <div className="px-3">
+                <NavLinks
+                  pathname={pathname}
+                  matchingCount={matchingCount}
+                  anomalyCount={anomalyCount}
+                  onNavigate={() => setMobileOpen(false)}
+                />
+              </div>
             </nav>
 
             <div className="p-3 border-t border-gray-200">
@@ -225,8 +229,11 @@ export default function Sidebar() {
           <NotificationBell />
         </div>
 
-        <nav className="flex-1 overflow-y-auto py-4 px-3">
-          <NavLinks pathname={pathname} matchingCount={matchingCount} anomalyCount={anomalyCount} />
+        <nav className="flex-1 overflow-y-auto py-4">
+          <VenueSwitcher />
+          <div className="px-3">
+            <NavLinks pathname={pathname} matchingCount={matchingCount} anomalyCount={anomalyCount} />
+          </div>
         </nav>
 
         <div className="p-3 border-t border-gray-100">

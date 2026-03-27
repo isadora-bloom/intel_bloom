@@ -3,6 +3,27 @@ import { router, venueProcedure, adminProcedure, ownerProcedure, publicProcedure
 import { TRPCError } from "@trpc/server";
 
 export const venuesRouter = router({
+  // List all venues the current user has access to (for venue switcher)
+  listUserVenues: venueProcedure.query(async ({ ctx }) => {
+    const { data, error } = await ctx.db
+      .from("venue_users")
+      .select("venue_id, role, venues:venue_id(id, name, city, state)")
+      .eq("user_id", ctx.user.id)
+      .eq("is_active", true);
+
+    if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
+
+    return (data ?? [])
+      .filter((row: any) => row.venues)
+      .map((row: any) => ({
+        id: row.venues.id as string,
+        name: row.venues.name as string,
+        city: row.venues.city as string | null,
+        state: row.venues.state as string | null,
+        role: row.role as string,
+      }));
+  }),
+
   // Get current venue
   getCurrent: venueProcedure.query(async ({ ctx }) => {
     const { data, error } = await ctx.db

@@ -31,3 +31,5 @@ Thumbs.db
 # Prisma
 packages/db/node_modules/
 .claude/worktrees/
+
+.vercel

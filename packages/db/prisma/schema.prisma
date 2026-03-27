@@ -231,6 +231,9 @@ model Client {
   lostReason     String?   @map("lost_reason")
   lostReasonNote String?   @map("lost_reason_note")
 
+  // Consultant assignment (migration 010)
+  assignedTo     String?   @map("assigned_to") @db.Uuid
+
   // HoneyBook integration (migration 014)
   honeyBookProjectId String?   @map("honeybook_project_id")
   inquiryDate        DateTime? @map("inquiry_date") @db.Timestamptz(6)
@@ -346,6 +349,9 @@ model Inquiry {
   responseSentAt       DateTime? @map("response_sent_at") @db.Timestamptz(6)
   responseTimeMinutes  Int?      @map("response_time_minutes")
 
+  // Consultant assignment (migration 010)
+  assignedTo                 String?  @map("assigned_to") @db.Uuid
+
   // Touchpoint attribution (migration 017)
   inquiryIntent              String?  @default("unknown") @map("inquiry_intent")
   firstContactChannel        String?  @map("first_contact_channel")
@@ -392,6 +398,9 @@ model Tour {
   // Outcome
   bookingDate           DateTime? @map("booking_date") @db.Date
   bookingConversionDays Int?      @map("booking_conversion_days")
+
+  // Consultant assignment (migration 010)
+  assignedTo   String? @map("assigned_to") @db.Uuid
 
   // Invitee fields from Calendly sync (migration 014)
   inviteeName  String? @map("invitee_name")
@@ -1249,11 +1258,12 @@ model DataAccessLog {
 // WEEKLY INSIGHTS — AI-generated weekly summaries
 // ============================================================
 model WeeklyInsight {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  venueId     String   @map("venue_id") @db.Uuid
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venueId     String    @map("venue_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  generatedAt DateTime? @default(now()) @map("generated_at") @db.Timestamptz(6)
   insights    Json
-  generatedBy String?  @map("generated_by")
+  generatedBy String?   @map("generated_by")
 
   venue Venue @relation(fields: [venueId], references: [id], onDelete: Cascade)
 
@@ -1395,4 +1405,57 @@ model VendorAvailability {
 
   @@unique([vendorId, date])
   @@map("vendor_availability")
+}
+
+// ============================================================
+// DEMO SESSIONS — tracks demo visitors (migration 010)
+// ============================================================
+model DemoSession {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  expiresAt       DateTime  @map("expires_at") @db.Timestamptz(6)
+  role            String
+  venueId         String?   @map("venue_id") @db.Uuid
+  consultantId    String?   @map("consultant_id") @db.Uuid
+  ipAddress       String?   @map("ip_address")
+  userAgent       String?   @map("user_agent")
+  referrer        String?
+  utmSource       String?   @map("utm_source")
+  utmMedium       String?   @map("utm_medium")
+  utmCampaign     String?   @map("utm_campaign")
+  totalPageViews  Int       @default(0) @map("total_page_views")
+  totalDurationSecs Int     @default(0) @map("total_duration_secs")
+  lastActiveAt    DateTime? @map("last_active_at") @db.Timestamptz(6)
+  converted       Boolean   @default(false)
+  convertedAt     DateTime? @map("converted_at") @db.Timestamptz(6)
+
+  events          DemoEvent[]
+
+  @@map("demo_sessions")
+}
+
+// ============================================================
+// DEMO EVENTS — granular interaction tracking (migration 010)
+// ============================================================
+model DemoEvent {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sessionId       String    @map("session_id") @db.Uuid
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  eventType       String    @map("event_type")
+  pagePath        String?   @map("page_path")
+  role            String?
+  venueSlug       String?   @map("venue_slug")
+  durationMs      Int?      @map("duration_ms")
+  scrollDepthPct  Int?      @map("scroll_depth_pct")
+  featureName     String?   @map("feature_name")
+  featureDetail   String?   @map("feature_detail")
+  elementId       String?   @map("element_id")
+  elementText     String?   @map("element_text")
+  viewportWidth   Int?      @map("viewport_width")
+  viewportHeight  Int?      @map("viewport_height")
+  isMobile        Boolean   @default(false) @map("is_mobile")
+
+  session         DemoSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@map("demo_events")
 }

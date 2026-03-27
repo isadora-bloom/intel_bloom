@@ -2,6 +2,8 @@ import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { cookies } from "next/headers";
+import { DEMO_COOKIE, parseDemoCookie, DEMO_ROLE_DEFAULTS, type DemoSession } from "@/lib/demo";
 
 // ── ROLE HIERARCHY ──────────────────────────────────────────────────────
 // Ordered from most to least privileged. Each role inherits capabilities
@@ -63,24 +65,65 @@ export async function getRoleForUser(
 // ── CONTEXT ─────────────────────────────────────────────────────────────
 
 export async function createTRPCContext() {
+  const cookieStore = await cookies();
+  const db = createServiceClient();
+
+  // ── Demo mode: if bloom_demo cookie is present, bypass Supabase auth ──
+  const demoCookieRaw = cookieStore.get(DEMO_COOKIE)?.value;
+  const demoSession = parseDemoCookie(demoCookieRaw);
+
+  if (demoSession) {
+    const supabase = await createClient();
+    return {
+      supabase,
+      db,
+      user: {
+        id: demoSession.consultantId || "de000000-0000-0000-0000-a00000000001",
+        app_metadata: { venue_id: demoSession.venueId },
+      } as any,
+      venueId: demoSession.venueId,
+      isDemo: true as const,
+      demoSession,
+    };
+  }
+
+  // ── Normal auth flow ──────────────────────────────────────────────────
   const supabase = await createClient();
 
-  // getSession() decodes the JWT locally — no network round trip.
-  // Data queries use ctx.db (service role) so we only need user.id for venueId lookup.
   const {
     data: { session },
   } = await supabase.auth.getSession();
   const user = session?.user ?? null;
 
-  // Service client bypasses RLS — used for all data queries once venueId is resolved.
-  // This eliminates a whole class of "RLS returning empty for my own data" bugs.
-  const db = createServiceClient();
-
-  // Fast path: venue_id baked into JWT app_metadata — no extra DB round-trip.
-  // Fallback: service role lookup for accounts set up before app_metadata was populated.
+  // Resolution order for venueId:
+  // 1. bloom_venue cookie (user explicitly switched venues)
+  // 2. venue_id in JWT app_metadata (fast path — no DB round-trip)
+  // 3. First active venue_users row (fallback for older accounts)
   let venueId: string | null = null;
   if (user) {
-    venueId = (user.app_metadata?.venue_id as string | undefined) ?? null;
+    // 1. Check the venue switcher cookie
+    const venueCookie = cookieStore.get("bloom_venue")?.value;
+    if (venueCookie) {
+      // Validate the user actually has access to this venue
+      const { data: membership } = await db
+        .from("venue_users")
+        .select("venue_id")
+        .eq("user_id", user.id)
+        .eq("venue_id", venueCookie)
+        .eq("is_active", true)
+        .limit(1)
+        .single();
+      if (membership) {
+        venueId = membership.venue_id;
+      }
+    }
+
+    // 2. JWT app_metadata
+    if (!venueId) {
+      venueId = (user.app_metadata?.venue_id as string | undefined) ?? null;
+    }
+
+    // 3. First active venue_users row
     if (!venueId) {
       const { data } = await db
         .from("venue_users")
@@ -93,7 +136,7 @@ export async function createTRPCContext() {
     }
   }
 
-  return { supabase, db, user, venueId };
+  return { supabase, db, user, venueId, isDemo: false as const, demoSession: null };
 }
 
 type Context = Awaited<ReturnType<typeof createTRPCContext>>;
@@ -112,17 +155,30 @@ export const venueProcedure = t.procedure.use(async ({ ctx, next }) => {
     throw new TRPCError({ code: "UNAUTHORIZED" });
   }
 
-  // Resolve role once per request so all downstream procedures can use it
-  const role = await getRoleForUser(ctx.db, ctx.user.id, ctx.venueId);
+  // Demo mode: use the role from the demo session, skip DB lookup
+  let role: VenueRole;
+  if (ctx.isDemo && ctx.demoSession) {
+    const roleMap: Record<string, VenueRole> = {
+      owner: "enterprise_owner",
+      manager: "venue_admin",
+      coordinator: "coordinator",
+    };
+    role = roleMap[ctx.demoSession.role] ?? "readonly";
+  } else {
+    role = (await getRoleForUser(ctx.db, ctx.user.id, ctx.venueId)) ?? ("readonly" as VenueRole);
+  }
 
   return next({
     ctx: {
       ...ctx,
       user: ctx.user,
       venueId: ctx.venueId,
-      role: role ?? ("readonly" as VenueRole),
+      role,
+      isDemo: ctx.isDemo,
+      demoSession: ctx.demoSession,
       /** Fire-and-forget audit log for sensitive operations */
       logAccess: (resourceType: string, resourceId: string, action: string) => {
+        if (ctx.isDemo) return; // Don't log demo access
         Promise.resolve(
           ctx.db.from("data_access_log").insert({
             venue_id: ctx.venueId,
@@ -136,6 +192,19 @@ export const venueProcedure = t.procedure.use(async ({ ctx, next }) => {
       },
     },
   });
+});
+
+// ── DEMO WRITE GUARD ────────────────────────────────────────────────────
+// Wrap any mutation procedure with this to block writes in demo mode.
+// Returns a friendly message instead of throwing.
+export const demoWriteGuard = t.middleware(({ ctx, next }) => {
+  if ((ctx as any).isDemo) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "This is a demo — in your account, you'd be able to edit this.",
+    });
+  }
+  return next({ ctx });
 });
 
 // ── ROLE-GATED PROCEDURES ───────────────────────────────────────────────

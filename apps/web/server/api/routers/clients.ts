@@ -21,6 +21,7 @@ export const clientsRouter = router({
       z.object({
         status: z.enum(CLIENT_STATUS).optional(),
         search: z.string().optional(),
+        coordinator: z.string().optional(),
         limit: z.number().int().min(1).max(100).default(50),
         offset: z.number().int().min(0).default(0),
         orderBy: z.enum(["created_at", "event_date", "name_primary"]).default("created_at"),
@@ -39,6 +40,10 @@ export const clientsRouter = router({
         query = query.eq("status", input.status);
       }
 
+      if (input?.coordinator) {
+        query = query.eq("assigned_coordinator", input.coordinator);
+      }
+
       if (input?.search) {
         query = query.or(
           `name_primary.ilike.%${input.search}%,email_primary.ilike.%${input.search}%,name_partner.ilike.%${input.search}%`
@@ -49,6 +54,22 @@ export const clientsRouter = router({
       if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
 
       return { clients: data ?? [], total: count ?? 0 };
+    }),
+
+  // Get distinct coordinator values for the venue (for filter dropdown)
+  getCoordinators: venueProcedure
+    .query(async ({ ctx }) => {
+      const { data, error } = await ctx.db
+        .from("clients")
+        .select("assigned_coordinator")
+        .eq("venue_id", ctx.venueId)
+        .not("assigned_coordinator", "is", null);
+
+      if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
+
+      // Extract distinct coordinator values
+      const unique = [...new Set((data ?? []).map((r: any) => r.assigned_coordinator as string))];
+      return unique.sort();
     }),
 
   // Get single client with all related records (five-layer profile)

@@ -1,21 +1,41 @@
 import { createClient, createServiceClient } from "@/lib/supabase/server";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
+import DemoBanner from "@/components/DemoBanner";
+import DemoTracker from "@/components/DemoTracker";
+import { DEMO_COOKIE, parseDemoCookie } from "@/lib/demo";
 
 export default async function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  // Use anon client only to verify the session (auth check)
+  const cookieStore = await cookies();
+
+  // ── Demo mode: skip auth, show demo banner ────────────────────────────
+  const demoCookieRaw = cookieStore.get(DEMO_COOKIE)?.value;
+  const demoSession = parseDemoCookie(demoCookieRaw);
+
+  if (demoSession) {
+    return (
+      <div className="flex min-h-screen bg-gray-50">
+        <Sidebar />
+        <main className="flex-1 lg:pl-56 pt-14 lg:pt-0">
+          <DemoBanner session={demoSession} />
+          <div className="p-6 lg:p-8">{children}</div>
+        </main>
+        <DemoTracker />
+      </div>
+    );
+  }
+
+  // ── Normal auth flow ──────────────────────────────────────────────────
   const authClient = await createClient();
   const { data: { user } } = await authClient.auth.getUser();
 
   if (!user) redirect("/login");
 
-  // Use service role to bypass RLS for onboarding check —
-  // avoids infinite redirect loop caused by venue_id_for_user() returning
-  // null while the user's venue_users row hasn't been picked up by RLS yet.
   const supabase = createServiceClient();
 
   const { data: venueUser } = await supabase
