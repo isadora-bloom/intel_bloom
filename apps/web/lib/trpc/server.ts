@@ -74,14 +74,17 @@ export async function createTRPCContext() {
 
   if (demoSession) {
     const supabase = await createClient();
+    // Allow venue switching in demo via bloom_venue cookie
+    const venueCookie = cookieStore.get("bloom_venue")?.value;
+    const venueId = venueCookie || demoSession.venueId;
     return {
       supabase,
       db,
       user: {
         id: demoSession.consultantId || "de000000-0000-0000-0000-a00000000001",
-        app_metadata: { venue_id: demoSession.venueId },
+        app_metadata: { venue_id: venueId },
       } as any,
-      venueId: demoSession.venueId,
+      venueId,
       isDemo: true as const,
       demoSession,
     };

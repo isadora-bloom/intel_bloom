@@ -1,6 +1,31 @@
 import { z } from "zod";
 import { router, venueProcedure } from "@/lib/trpc/server";
 import { TRPCError } from "@trpc/server";
+import { DEMO_ORG_ID } from "@/lib/demo";
+
+/** Resolve the org ID — in demo mode use the demo org, otherwise look up from venue_users */
+async function resolveOrgId(ctx: any): Promise<string | null> {
+  if (ctx.isDemo && ctx.demoSession) {
+    return ctx.demoSession.orgId || DEMO_ORG_ID;
+  }
+  const { data } = await ctx.db
+    .from("venue_users")
+    .select("organisation_id")
+    .eq("user_id", ctx.user.id)
+    .not("organisation_id", "is", null)
+    .limit(1)
+    .single();
+  return data?.organisation_id ?? null;
+}
+
+/** Get all venue IDs + names for an org */
+async function getOrgVenues(ctx: any, orgId: string): Promise<{ id: string; name: string; city: string | null; state: string | null; region: string | null }[]> {
+  const { data } = await ctx.db
+    .from("venues")
+    .select("id, name, city, state, region")
+    .eq("organisation_id", orgId);
+  return data ?? [];
+}
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -56,38 +81,16 @@ export const enterpriseRouter = router({
   // ── getPortfolio ─────────────────────────────────────────────────────────
   // Returns all venues in the user's org with health + quick stats.
   getPortfolio: venueProcedure.query(async ({ ctx }) => {
-    // 1. Get all venue_users rows for this user that have an org
-    const { data: orgVenueUsers, error: orgError } = await ctx.db
-      .from("venue_users")
-      .select("venue_id, organisation_id, venues(id, name, city, state, region, organisation_id)")
-      .eq("user_id", ctx.user.id)
-      .not("organisation_id", "is", null);
+    const orgId = await resolveOrgId(ctx);
+    if (!orgId) return { venues: [], orgName: null };
 
-    if (orgError) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: orgError.message });
-
-    if (!orgVenueUsers || orgVenueUsers.length === 0) {
-      return { venues: [], orgName: null };
-    }
-
-    // Deduplicate by org — take the first org found
-    const firstOrgId = (orgVenueUsers[0] as any).organisation_id as string;
-
-    // Get org name
     const { data: orgRow } = await ctx.db
       .from("organisations")
       .select("name")
-      .eq("id", firstOrgId)
+      .eq("id", orgId)
       .single();
 
-    // Get ALL venues in this org (not just the ones this user is directly on)
-    const { data: allOrgVenueRows, error: venuesError } = await ctx.db
-      .from("venues")
-      .select("id, name, city, state, region")
-      .eq("organisation_id", firstOrgId);
-
-    if (venuesError) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: venuesError.message });
-
-    const venues = allOrgVenueRows ?? [];
+    const venues = await getOrgVenues(ctx, orgId);
 
     const thisMonth = startOfThisMonth();
     const lastMonthStart = startOfLastMonth();
@@ -178,24 +181,11 @@ export const enterpriseRouter = router({
 
   // ── getCompanyMetrics ─────────────────────────────────────────────────────
   getCompanyMetrics: venueProcedure.query(async ({ ctx }) => {
-    // Get all venues in the user's org
-    const { data: orgVenueUsers } = await ctx.db
-      .from("venue_users")
-      .select("organisation_id")
-      .eq("user_id", ctx.user.id)
-      .not("organisation_id", "is", null)
-      .limit(1)
-      .single();
-
-    const orgId = orgVenueUsers?.organisation_id;
+    const orgId = await resolveOrgId(ctx);
     if (!orgId) return null;
 
-    const { data: orgVenues } = await ctx.db
-      .from("venues")
-      .select("id, name")
-      .eq("organisation_id", orgId);
-
-    const venueIds = (orgVenues ?? []).map((v) => v.id);
+    const orgVenues = await getOrgVenues(ctx, orgId);
+    const venueIds = orgVenues.map((v) => v.id);
     if (venueIds.length === 0) return null;
 
     const yearStart = startOfYear();
@@ -351,27 +341,15 @@ export const enterpriseRouter = router({
 
   // ── getTeamPerformance ───────────────────────────────────────────────────
   getTeamPerformance: venueProcedure.query(async ({ ctx }) => {
-    const { data: orgVenueUsers } = await ctx.db
-      .from("venue_users")
-      .select("organisation_id")
-      .eq("user_id", ctx.user.id)
-      .not("organisation_id", "is", null)
-      .limit(1)
-      .single();
-
-    const orgId = orgVenueUsers?.organisation_id;
+    const orgId = await resolveOrgId(ctx);
     if (!orgId) return { coordinators: [] };
 
-    const { data: orgVenues } = await ctx.db
-      .from("venues")
-      .select("id, name")
-      .eq("organisation_id", orgId);
-
-    const venueIds = (orgVenues ?? []).map((v) => v.id);
+    const orgVenues = await getOrgVenues(ctx, orgId);
+    const venueIds = orgVenues.map((v) => v.id);
     if (venueIds.length === 0) return { coordinators: [] };
 
     const venueNameMap: Record<string, string> = {};
-    for (const v of orgVenues ?? []) venueNameMap[v.id] = v.name;
+    for (const v of orgVenues) venueNameMap[v.id] = v.name;
 
     const { data: allClients } = await ctx.db
       .from("clients")
@@ -458,23 +436,10 @@ export const enterpriseRouter = router({
 
   // ── getRegions ──────────────────────────────────────────────────────────
   getRegions: venueProcedure.query(async ({ ctx }) => {
-    const { data: orgVenueUsers } = await ctx.db
-      .from("venue_users")
-      .select("organisation_id")
-      .eq("user_id", ctx.user.id)
-      .not("organisation_id", "is", null)
-      .limit(1)
-      .single();
-
-    const orgId = orgVenueUsers?.organisation_id;
+    const orgId = await resolveOrgId(ctx);
     if (!orgId) return { regions: [], hasNoRegions: true };
 
-    const { data: orgVenues } = await ctx.db
-      .from("venues")
-      .select("id, name, region")
-      .eq("organisation_id", orgId);
-
-    const venues = orgVenues ?? [];
+    const venues = await getOrgVenues(ctx, orgId);
     const venueIds = venues.map((v) => v.id);
 
     if (venueIds.length === 0) return { regions: [], hasNoRegions: false };

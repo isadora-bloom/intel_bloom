@@ -1,10 +1,29 @@
 import { z } from "zod";
 import { router, venueProcedure, adminProcedure, ownerProcedure, publicProcedure } from "@/lib/trpc/server";
 import { TRPCError } from "@trpc/server";
+import { DEMO_ORG_ID } from "@/lib/demo";
 
 export const venuesRouter = router({
   // List all venues the current user has access to (for venue switcher)
   listUserVenues: venueProcedure.query(async ({ ctx }) => {
+    // Demo mode: return all venues in the demo org
+    if ((ctx as any).isDemo) {
+      const { data, error } = await ctx.db
+        .from("venues")
+        .select("id, name, city, state")
+        .eq("organisation_id", (ctx as any).demoSession?.orgId || DEMO_ORG_ID);
+
+      if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
+
+      return (data ?? []).map((v: any) => ({
+        id: v.id as string,
+        name: v.name as string,
+        city: v.city as string | null,
+        state: v.state as string | null,
+        role: "enterprise_owner",
+      }));
+    }
+
     const { data, error } = await ctx.db
       .from("venue_users")
       .select("venue_id, role, venues:venue_id(id, name, city, state)")
