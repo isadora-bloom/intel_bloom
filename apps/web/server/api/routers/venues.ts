@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { router, venueProcedure, publicProcedure } from "@/lib/trpc/server";
+import { router, venueProcedure, adminProcedure, ownerProcedure, publicProcedure } from "@/lib/trpc/server";
 import { TRPCError } from "@trpc/server";
 
 export const venuesRouter = router({
@@ -15,8 +15,8 @@ export const venuesRouter = router({
     return data;
   }),
 
-  // Update venue settings — only columns that exist in 001_schema.sql
-  update: venueProcedure
+  // Update venue settings — requires venue_admin or higher
+  update: adminProcedure
     .input(
       z.object({
         name: z.string().optional(),
@@ -272,8 +272,8 @@ export const venuesRouter = router({
     };
   }),
 
-  // Delete all seed data for this venue
-  deleteSeedData: venueProcedure.mutation(async ({ ctx }) => {
+  // Delete all seed data for this venue — requires venue_owner
+  deleteSeedData: ownerProcedure.mutation(async ({ ctx }) => {
     // Delete in FK-safe order
     await ctx.db.from("lost_deals").delete().eq("venue_id", ctx.venueId);
     await ctx.db.from("tours").delete().eq("venue_id", ctx.venueId);
@@ -283,8 +283,8 @@ export const venuesRouter = router({
     return { success: true };
   }),
 
-  // Creates a venue team invitation via user_invitations table
-  inviteTeamMember: venueProcedure
+  // Creates a venue team invitation — requires venue_admin or higher
+  inviteTeamMember: adminProcedure
     .input(z.object({ email: z.string().email(), role: z.enum(["admin", "member"]).default("member") }))
     .mutation(async ({ ctx, input }) => {
       const { data: { user } } = await ctx.db.auth.getUser();
@@ -430,7 +430,8 @@ export const venuesRouter = router({
 
   // ── DATA EXPORT (one-click full venue export) ─────────────────────────
   // Brief: "Data export: one-click full export of all venue data as CSV/JSON."
-  exportAllData: venueProcedure.query(async ({ ctx }) => {
+  // Requires venue_admin or higher
+  exportAllData: adminProcedure.query(async ({ ctx }) => {
     // Log this sensitive action
     ctx.logAccess("venue", ctx.venueId, "export");
 
