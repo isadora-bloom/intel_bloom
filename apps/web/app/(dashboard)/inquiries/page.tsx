@@ -183,7 +183,13 @@ export default function InquiriesPage() {
             {(data?.inquiries ?? []).map((inq: any) => (
               <tr key={inq.id} className="hover:bg-gray-50">
                 <td className="px-4 py-3 font-medium text-gray-900">
-                  {inq.name_extracted ?? "Unknown"}
+                  {inq.matched_client ? (
+                    <Link href={`/clients/${inq.matched_client.id}`} className="hover:text-blue-600 hover:underline">
+                      {inq.name_extracted ?? "Unknown"}
+                    </Link>
+                  ) : (
+                    inq.name_extracted ?? "Unknown"
+                  )}
                 </td>
                 <td className="px-4 py-3 text-gray-500">
                   {inq.received_at

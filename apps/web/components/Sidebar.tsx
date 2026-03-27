@@ -46,7 +46,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: "Pipeline",
     items: [
       { href: "/inquiries", label: "Inquiry Log", icon: Inbox },
-      { href: "/clients", label: "Clients", icon: Users },
+      { href: "/clients", label: "Pipeline", icon: Users },
       { href: "/tours", label: "Tours", icon: CalendarCheck },
       { href: "/lost-deals", label: "Lost Deals", icon: XCircle },
       { href: "/matching", label: "Dedup & Match", icon: GitMerge, badge: true },
