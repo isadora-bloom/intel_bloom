@@ -89,13 +89,24 @@ export const insightsRouter = router({
         .eq("venue_id", ctx.venueId)
         .not("resolved_source", "is", null),
 
-      // weather_monthly: id, station_id, month, avg_temp_4pm_f, avg_rain_chance_pct,
-      // total_precip, precip_days, outdoor_score
+      // weather_monthly — try new schema (station_id) then old (noaa_station_id)
       venue?.noaa_station_id
         ? ctx.db
             .from("weather_monthly")
-            .select("month, avg_temp_4pm_f, avg_rain_chance_pct, total_precip, outdoor_score")
-            .eq("station_id", venue.noaa_station_id)
+            .select("month, year, precipitation_inches, temp_avg_f, temp_max_f, weather_score")
+            .eq("noaa_station_id", venue.noaa_station_id)
+            .then(r => {
+              // Normalize to common shape
+              if (r.data && r.data.length > 0) {
+                r.data = r.data.map((row: any) => ({
+                  ...row,
+                  outdoor_score: row.weather_score,
+                  avg_temp_4pm_f: row.temp_max_f ?? row.temp_avg_f,
+                  total_precip: row.precipitation_inches,
+                }));
+              }
+              return r;
+            })
         : Promise.resolve({ data: null }),
 
       ctx.db
@@ -130,9 +141,9 @@ export const insightsRouter = router({
         .limit(6),
     ]);
 
-    const weatherData    = weatherResult.data;
-    const searchTrends   = searchTrendsResult.data;
-    const macroData      = macroResult.data;
+    const weatherData    = weatherResult.data as any[] | null;
+    const searchTrends   = searchTrendsResult.data as any[] | null;
+    const macroData      = macroResult.data as any[] | null;
 
     // ── INSIGHT 1: SOURCE PERFORMANCE ────────────────────────────────────────
     if (sourceClients && sourceClients.length > 0) {
@@ -154,14 +165,14 @@ export const insightsRouter = router({
       // Pull channel_spend for additional spend data
       const { data: spendData } = await ctx.db
         .from("channel_spend")
-        .select("channel, spend_cents")
+        .select("channel, amount_cents")
         .eq("venue_id", ctx.venueId);
 
       const channelSpendMap = new Map<string, number>();
       for (const row of spendData ?? []) {
         channelSpendMap.set(
           row.channel,
-          (channelSpendMap.get(row.channel) ?? 0) + (row.spend_cents ?? 0)
+          (channelSpendMap.get(row.channel) ?? 0) + (row.amount_cents ?? 0)
         );
       }
 
@@ -843,14 +854,24 @@ export const insightsRouter = router({
           .gte("received_at", subDays(new Date(), 60).toISOString())
           .lt("received_at", subDays(new Date(), 30).toISOString()),
 
-        // weather_monthly: station_id, month, avg_temp_4pm_f, avg_rain_chance_pct, total_precip, outdoor_score
+        // weather_monthly — use old schema column names
         venue?.noaa_station_id
           ? ctx.db
               .from("weather_monthly")
-              .select("month, avg_temp_4pm_f, avg_rain_chance_pct, total_precip, outdoor_score")
-              .eq("station_id", venue.noaa_station_id)
+              .select("month, year, precipitation_inches, temp_avg_f, temp_max_f, weather_score")
+              .eq("noaa_station_id", venue.noaa_station_id)
+              .order("year", { ascending: false })
               .order("month", { ascending: false })
               .limit(12)
+              .then(r => {
+                if (r.data) r.data = r.data.map((row: any) => ({
+                  ...row,
+                  outdoor_score: row.weather_score,
+                  avg_temp_4pm_f: row.temp_max_f ?? row.temp_avg_f,
+                  total_precip: row.precipitation_inches,
+                }));
+                return r;
+              })
           : Promise.resolve({ data: null }),
 
         // macro_economic: series_id, date, value, region
@@ -878,11 +899,11 @@ export const insightsRouter = router({
         // Channel spend for cost context
         ctx.db
           .from("channel_spend")
-          .select("channel, spend_cents, month")
+          .select("channel, amount_cents, month")
           .eq("venue_id", ctx.venueId),
       ]);
 
-      const weatherData = weatherResult.data;
+      const weatherData = weatherResult.data as any[] | null;
 
       // Build compact context
       const totalClients      = clients?.length ?? 0;
@@ -916,7 +937,7 @@ export const insightsRouter = router({
       const channelSpendByChannel: Record<string, number> = {};
       for (const row of channelSpendResult.data ?? []) {
         channelSpendByChannel[row.channel] =
-          (channelSpendByChannel[row.channel] ?? 0) + (row.spend_cents ?? 0);
+          (channelSpendByChannel[row.channel] ?? 0) + (row.amount_cents ?? 0);
       }
 
       const context = {
