@@ -26,6 +26,10 @@ import {
   LineChart,
   Share2,
   ScanLine,
+  LayoutGrid,
+  Building2,
+  MapPin,
+  UserCheck,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
@@ -36,6 +40,16 @@ import VenueSwitcher from "./VenueSwitcher";
 
 type NavItem = { href: string; label: string; icon: React.ElementType; badge?: boolean };
 type NavGroup = { label: string | null; items: NavItem[] };
+
+const ENTERPRISE_GROUP: NavGroup = {
+  label: "Portfolio",
+  items: [
+    { href: "/portfolio", label: "All Venues", icon: LayoutGrid },
+    { href: "/company", label: "Company", icon: Building2 },
+    { href: "/regions", label: "Regions", icon: MapPin },
+    { href: "/team", label: "Team", icon: UserCheck },
+  ],
+};
 
 const NAV_GROUPS: NavGroup[] = [
   {
@@ -88,16 +102,19 @@ function NavLinks({
   pathname,
   matchingCount,
   anomalyCount,
+  isEnterprise,
   onNavigate,
 }: {
   pathname: string;
   matchingCount: number;
   anomalyCount: number;
+  isEnterprise?: boolean;
   onNavigate?: () => void;
 }) {
+  const groups = isEnterprise ? [ENTERPRISE_GROUP, ...NAV_GROUPS] : NAV_GROUPS;
   return (
     <div className="space-y-5">
-      {NAV_GROUPS.map((group, gi) => (
+      {groups.map((group, gi) => (
         <div key={gi}>
           {group.label && (
             <p className="px-3 mb-1 text-[10px] font-semibold text-gray-400 uppercase tracking-widest">
@@ -156,6 +173,11 @@ export default function Sidebar() {
   });
   const anomalyCount = anomalyCountData ?? 0;
 
+  const { data: userVenues } = trpc.venues.listUserVenues.useQuery(undefined, {
+    staleTime: 1000 * 60 * 5,
+  });
+  const isEnterprise = (userVenues?.length ?? 0) > 1;
+
   async function handleSignOut() {
     await supabase.auth.signOut();
     router.push("/login");
@@ -204,6 +226,7 @@ export default function Sidebar() {
                   pathname={pathname}
                   matchingCount={matchingCount}
                   anomalyCount={anomalyCount}
+                  isEnterprise={isEnterprise}
                   onNavigate={() => setMobileOpen(false)}
                 />
               </div>
@@ -232,7 +255,7 @@ export default function Sidebar() {
         <nav className="flex-1 overflow-y-auto py-4">
           <VenueSwitcher />
           <div className="px-3">
-            <NavLinks pathname={pathname} matchingCount={matchingCount} anomalyCount={anomalyCount} />
+            <NavLinks pathname={pathname} matchingCount={matchingCount} anomalyCount={anomalyCount} isEnterprise={isEnterprise} />
           </div>
         </nav>
 

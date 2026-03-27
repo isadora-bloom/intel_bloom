@@ -70,7 +70,8 @@ export default function DemoPage() {
       });
 
       if (!res.ok) throw new Error("Failed to start demo");
-      router.push("/dashboard");
+      // Route based on role — owners see portfolio, others see single-venue dashboard
+      router.push(role === "owner" ? "/portfolio" : "/dashboard");
     } catch (err) {
       console.error(err);
       setLoading(null);
