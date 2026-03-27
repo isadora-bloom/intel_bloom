@@ -35,10 +35,20 @@ function SyncPanel() {
   const utils = trpc.useUtils();
   const syncGoogle = trpc.reviews.syncGoogle.useMutation({ onSuccess: () => utils.reviews.list.invalidate() });
   const syncKnot = trpc.reviews.syncKnot.useMutation({ onSuccess: () => utils.reviews.list.invalidate() });
-  const analyze = trpc.reviews.analyzeLanguage.useMutation({ onSuccess: () => utils.reviews.list.invalidate() });
+  const analyze = trpc.reviews.analyzeLanguage.useMutation({
+    onSuccess: (data) => {
+      utils.reviews.list.invalidate();
+      utils.reviews.listLanguagePhrases.invalidate();
+      setAnalyzeResult(data);
+    },
+    onError: (err) => {
+      setAnalyzeResult({ analyzed: 0, error: err.message });
+    },
+  });
   const [knotText, setKnotText] = useState("");
   const [googleResult, setGoogleResult] = useState<{ synced: number; matched: number } | null>(null);
   const [knotResult, setKnotResult] = useState<{ synced: number; matched: number } | null>(null);
+  const [analyzeResult, setAnalyzeResult] = useState<{ analyzed: number; error?: string } | null>(null);
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 p-5 space-y-5">
@@ -107,6 +117,13 @@ function SyncPanel() {
           {analyze.isPending ? <><Loader2 size={13} className="animate-spin" /> Analyzing…</> : "Analyze language"}
         </button>
       </div>
+      {analyzeResult && (
+        <div className={`mt-2 text-xs px-3 py-2 rounded ${analyzeResult.error ? "bg-red-50 text-red-700" : "bg-green-50 text-green-700"}`}>
+          {analyzeResult.error
+            ? `Error: ${analyzeResult.error}`
+            : `Analyzed ${analyzeResult.analyzed} reviews. Check the Phrases tab below.`}
+        </div>
+      )}
     </div>
   );
 }

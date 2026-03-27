@@ -351,9 +351,17 @@ Return a JSON array of exactly ${reviews.length} objects:
 
       let parsed: any[] = [];
       try {
-        parsed = await callAIJson<any[]>(prompt, { maxTokens: 3000, taskType: "review_language_analysis" });
-      } catch {
-        parsed = [];
+        parsed = await callAIJson<any[]>(prompt, {
+          maxTokens: 3000,
+          taskType: "review_language_analysis",
+          venueId: ctx.venueId,
+        });
+      } catch (err: any) {
+        console.error("[analyzeLanguage] AI call failed:", err?.message ?? err);
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: `AI analysis failed: ${err?.message ?? "Unknown error"}. Check that ANTHROPIC_API_KEY is configured.`,
+        });
       }
       const now = new Date().toISOString();
 
