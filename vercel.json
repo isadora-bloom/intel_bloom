@@ -1,8 +1,4 @@
 {
-  "buildCommand": "npx turbo build --filter=@bloom/web",
-  "outputDirectory": "apps/web/.next",
-  "framework": "nextjs",
-  "installCommand": "npm install",
   "crons": [
     {
       "path": "/api/macro/fred",
