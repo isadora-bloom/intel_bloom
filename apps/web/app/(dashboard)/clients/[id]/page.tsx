@@ -1,9 +1,8 @@
 "use client";
 
 import { trpc } from "@/lib/trpc/client";
-import { use } from "react";
 import { format } from "date-fns";
-import { useState } from "react";
+import { useState, use } from "react";
 import { ArrowLeft, Upload, Pencil, X, Check, Star } from "lucide-react";
 import Link from "next/link";
 
@@ -17,8 +16,9 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "reputation", label: "Reputation" },
 ];
 
-export default function ClientRecordPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params);
+export default function ClientRecordPage({ params }: { params: { id: string } | Promise<{ id: string }> }) {
+  const resolvedParams = params instanceof Promise ? use(params) : params;
+  const id = resolvedParams.id;
   const [activeTab, setActiveTab] = useState<Tab>("overview");
 
   const utils = trpc.useUtils();

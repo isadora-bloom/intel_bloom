@@ -20,8 +20,9 @@ const UPLOAD_TYPES = [
 
 const SENSITIVE_TYPES = ["family_dynamics", "stress_indicator"];
 
-export default function UploadPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id: clientId } = use(params);
+export default function UploadPage({ params }: { params: { id: string } | Promise<{ id: string }> }) {
+  const resolvedParams = params instanceof Promise ? use(params) : params;
+  const clientId = resolvedParams.id;
   const [file, setFile] = useState<File | null>(null);
   const [uploadType, setUploadType] = useState("tour_recording");
   const [uploading, setUploading] = useState(false);
