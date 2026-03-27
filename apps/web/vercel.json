@@ -1,0 +1,40 @@
+{
+  "crons": [
+    {
+      "path": "/api/macro/fred",
+      "schedule": "0 6 1 * *"
+    },
+    {
+      "path": "/api/briefing/send",
+      "schedule": "0 8 * * 1"
+    },
+    {
+      "path": "/api/cron?job=weather_forecast_check",
+      "schedule": "0 7 * * *"
+    },
+    {
+      "path": "/api/cron?job=anomaly_detection",
+      "schedule": "0 7 * * *"
+    },
+    {
+      "path": "/api/cron?job=market_pulse_refresh",
+      "schedule": "0 5 * * 1"
+    },
+    {
+      "path": "/api/cron?job=trends_refresh",
+      "schedule": "0 4 * * 2"
+    },
+    {
+      "path": "/api/cron?job=sensitive_data_cleanup",
+      "schedule": "0 3 * * 0"
+    },
+    {
+      "path": "/api/cron?job=weekly_insights",
+      "schedule": "0 6 * * 1"
+    },
+    {
+      "path": "/api/cron?job=post_wedding_sequence",
+      "schedule": "0 10 * * *"
+    }
+  ]
+}
