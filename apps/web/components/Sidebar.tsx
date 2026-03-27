@@ -25,6 +25,7 @@ import {
   XCircle,
   LineChart,
   Share2,
+  ScanLine,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
@@ -75,7 +76,8 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: "Settings",
     items: [
-      { href: "/import", label: "Import data", icon: DownloadCloud },
+      { href: "/capture", label: "Screenshot capture", icon: ScanLine },
+      { href: "/import", label: "CSV import", icon: DownloadCloud },
       { href: "/settings", label: "Settings", icon: Settings },
     ],
   },

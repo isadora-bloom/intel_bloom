@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { trpc } from "@/lib/trpc/client";
 import type { ClassifyResult, CaptureRow, CaptureAnomaly } from "@/server/api/routers/capture";
 import {
@@ -500,6 +500,31 @@ export default function CapturePage() {
     [classifyImageMutation, classifyCSVMutation]
   );
 
+  // ── Clipboard paste (Ctrl+V with image) ──────────────────────────────
+  const handlePaste = useCallback(
+    (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+
+      for (const item of Array.from(items)) {
+        if (item.type.startsWith("image/")) {
+          e.preventDefault();
+          const file = item.getAsFile();
+          if (file) {
+            const named = new File([file], `screenshot-${Date.now()}.png`, { type: file.type });
+            processFile(named);
+          }
+        }
+      }
+    },
+    [processFile]
+  );
+
+  useEffect(() => {
+    document.addEventListener("paste", handlePaste);
+    return () => document.removeEventListener("paste", handlePaste);
+  }, [handlePaste]);
+
   // ── Drag-and-drop ──────────────────────────────────────────────────────────
   const onDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -665,13 +690,13 @@ export default function CapturePage() {
         />
         <Upload size={28} className="mx-auto text-gray-300 mb-3" />
         <p className="text-sm font-medium text-gray-700">
-          Drop files here or <span className="text-blue-600">browse</span>
+          Drop files, <span className="text-blue-600">browse</span>, or <kbd className="px-1.5 py-0.5 bg-gray-100 border border-gray-300 rounded text-xs font-mono">Ctrl+V</kbd> to paste
         </p>
         <p className="text-xs text-gray-400 mt-1">
           Screenshots (PNG, JPG, WebP) · CSV exports · Multiple files at once
         </p>
         <p className="text-xs text-gray-400 mt-2">
-          Works with: The Knot · HoneyBook · Instagram DMs · Email screenshots · Spreadsheets
+          Works with: The Knot · HoneyBook · Google Ads · Instagram Insights · Email screenshots · Any chart or spreadsheet
         </p>
       </div>
 
