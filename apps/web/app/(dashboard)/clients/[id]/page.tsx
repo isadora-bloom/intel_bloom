@@ -32,7 +32,10 @@ export default function ClientRecordPage({ params }: { params: Promise<{ id: str
     return <div className="p-8 text-red-500">Client not found</div>;
   }
 
-  const { client, touchpoints, planningEvents, vendors, uploads, referralsGiven, referralsReceived, weatherForecast } = data;
+  const { client, touchpoints, planningEvents, vendors, uploads } = data;
+  const referralsGiven = (data as any).referralsGiven ?? [];
+  const referralsReceived = (data as any).referralsReceived ?? [];
+  const weatherForecast = (data as any).weatherForecast ?? null;
 
   return (
     <div className="max-w-5xl">
