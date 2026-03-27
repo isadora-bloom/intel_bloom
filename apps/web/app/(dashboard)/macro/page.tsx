@@ -4,7 +4,7 @@ import { trpc } from "@/lib/trpc/client";
 import MarketPulseCard from "@/components/macro/MarketPulseCard";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  CartesianGrid, Legend,
+  CartesianGrid, Legend, ComposedChart, Bar, Cell, ReferenceLine,
 } from "recharts";
 import { format } from "date-fns";
 
@@ -151,14 +151,68 @@ export default function MacroPage() {
         </div>
       )}
 
+      {/* ── OUTDOOR EVENT SCORE CHART ── */}
+      {weatherByMonth.length > 0 && weatherByMonth.some((m: any) => m.eventScore !== null) && (
+        <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-4">
+          <div>
+            <h2 className="text-base font-semibold text-gray-900 mb-0.5">Outdoor event conditions by month</h2>
+            <p className="text-xs text-gray-400">
+              Based on avg afternoon temperature and rainfall. Ideal = 70–80°F and dry. Score 10 = perfect, 0 = terrible.
+            </p>
+          </div>
+
+          <ResponsiveContainer width="100%" height={280}>
+            <ComposedChart data={weatherByMonth} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+              <XAxis dataKey="month" tick={{ fontSize: 11 }} tickLine={false} />
+              <YAxis yAxisId="score" tick={{ fontSize: 11 }} domain={[0, 10]} tickLine={false} axisLine={false} width={28} />
+              <YAxis yAxisId="temp" orientation="right" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} width={40}
+                tickFormatter={(v: number) => `${v}°F`} />
+              <Tooltip
+                formatter={(v: any, name: string) =>
+                  name === "Avg high (≈4pm)" ? `${v}°F` :
+                  name === "Avg rainfall" ? `${v}"` :
+                  v
+                }
+              />
+              <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
+              <Bar yAxisId="score" dataKey="eventScore" name="Event score" fill="#10b981" maxBarSize={28} radius={[3,3,0,0]}>
+                {weatherByMonth.map((m: any, i: number) => {
+                  const s = m.eventScore ?? 0;
+                  const fill = s >= 7 ? "#10b981" : s >= 4 ? "#f59e0b" : "#ef4444";
+                  return <Cell key={i} fill={fill} />;
+                })}
+              </Bar>
+              <Line yAxisId="temp" type="monotone" dataKey="avgTemp" name="Avg high (≈4pm)" stroke="#f97316" strokeWidth={2} dot={{ r: 3 }} />
+              <ReferenceLine yAxisId="temp" y={70} stroke="#10b981" strokeDasharray="4 4" label={{ value: "70°F", position: "left", fontSize: 9, fill: "#10b981" }} />
+              <ReferenceLine yAxisId="temp" y={80} stroke="#10b981" strokeDasharray="4 4" label={{ value: "80°F", position: "left", fontSize: 9, fill: "#10b981" }} />
+            </ComposedChart>
+          </ResponsiveContainer>
+
+          {/* Monthly detail strip */}
+          <div className="grid grid-cols-12 gap-1 text-center">
+            {weatherByMonth.map((m: any) => (
+              <div key={m.month} className="text-[10px]">
+                <div className="font-medium text-gray-700">{m.month}</div>
+                <div className="text-gray-500">{m.avgTemp ?? "—"}°F</div>
+                <div className="text-blue-500">{m.avgPrecip ?? "—"}&quot;</div>
+                <div className={`font-bold ${(m.eventScore ?? 0) >= 7 ? "text-green-600" : (m.eventScore ?? 0) >= 4 ? "text-amber-600" : "text-red-500"}`}>
+                  {m.eventScore ?? "—"}/10
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* ── WEATHER SEASONALITY (heat + rain split) ── */}
       {weatherByMonth.some((m: any) => m.avgRainScore !== null) && (
         <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-5">
           <div>
-            <h2 className="text-base font-semibold text-gray-900 mb-0.5">Weather seasonality</h2>
+            <h2 className="text-base font-semibold text-gray-900 mb-0.5">Weather risk breakdown</h2>
             <p className="text-xs text-gray-400">
               3-year monthly averages. 0 = no risk, 10 = high risk for outdoor events.
-              Trend arrows show whether risk is rising ↑ or falling ↓ across those years.
+              Ideal range: 70–80°F and dry. Trend arrows show whether risk is rising ↑ or falling ↓.
             </p>
           </div>
 
