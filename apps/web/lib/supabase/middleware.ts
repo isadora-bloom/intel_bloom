@@ -4,11 +4,6 @@ import { type NextRequest, NextResponse } from "next/server";
 export async function updateSession(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
 
-  // Skip expensive auth.getUser() for API routes — they authenticate themselves
-  if (pathname.startsWith("/api/")) {
-    return NextResponse.next({ request });
-  }
-
   let supabaseResponse = NextResponse.next({ request });
 
   const supabase = createServerClient(
@@ -31,6 +26,13 @@ export async function updateSession(request: NextRequest) {
       },
     }
   );
+
+  // For API routes: refresh the session cookie (so tRPC gets the auth token)
+  // but skip redirect logic — API routes handle their own auth errors.
+  if (pathname.startsWith("/api/")) {
+    await supabase.auth.getSession();
+    return supabaseResponse;
+  }
 
   const {
     data: { user },
