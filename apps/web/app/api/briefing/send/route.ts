@@ -81,8 +81,8 @@ export async function POST(request: NextRequest) {
 
   const supabase = createServiceClient();
   const resendApiKey = process.env.RESEND_API_KEY;
-  const fromEmail = process.env.BRIEFING_FROM_EMAIL ?? "Bloom Intelligence <briefing@bloomhq.co>";
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.bloomhq.co";
+  const fromEmail = process.env.BRIEFING_FROM_EMAIL ?? "Bloom Intelligence <briefing@thebloomhouse.ai>";
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.thebloomhouse.ai";
 
   if (!resendApiKey) {
     console.warn("RESEND_API_KEY not configured — skipping briefing email sends.");

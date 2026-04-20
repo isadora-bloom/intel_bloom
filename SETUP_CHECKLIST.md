@@ -38,7 +38,7 @@ All migration files are in `supabase/migrations/`. Run them all before first use
 - [ ] `ANTHROPIC_API_KEY` — from console.anthropic.com
 - [ ] `GOOGLE_CLIENT_ID` — for Gmail OAuth
 - [ ] `GOOGLE_CLIENT_SECRET` — for Gmail OAuth
-- [ ] `NEXT_PUBLIC_APP_URL` — your production URL (no trailing slash, e.g. `https://app.bloomhq.co`)
+- [ ] `NEXT_PUBLIC_APP_URL` — your production URL (no trailing slash, e.g. `https://app.thebloomhouse.ai`)
 
 ### New — Weather data (NOAA)
 - [ ] `NOAA_CDO_TOKEN` — free, register at https://www.ncdc.noaa.gov/cdo-web/token
@@ -59,7 +59,7 @@ All migration files are in `supabase/migrations/`. Run them all before first use
 
 ### New — Email (Resend)
 - [ ] `RESEND_API_KEY` — from resend.com → API Keys
-- [ ] `BRIEFING_FROM_EMAIL` — e.g. `briefing@bloomhq.co` (must be a verified domain in Resend)
+- [ ] `BRIEFING_FROM_EMAIL` — e.g. `briefing@thebloomhouse.ai` (must be a verified domain in Resend)
 
 ### New — FRED economic data
 - [ ] `FRED_API_KEY` — free registration at https://fred.stlouisfed.org/docs/api/api_key.html
@@ -91,7 +91,7 @@ All migration files are in `supabase/migrations/`. Run them all before first use
 
 ### Resend (email sending)
 1. [ ] Create account at resend.com
-2. [ ] Add and verify your sending domain (e.g. bloomhq.co)
+2. [ ] Add and verify your sending domain (e.g. thebloomhouse.ai)
    - Add the DNS records Resend provides to your domain registrar
 3. [ ] Create an API key → `RESEND_API_KEY`
 4. [ ] Set `BRIEFING_FROM_EMAIL` to a verified address on that domain

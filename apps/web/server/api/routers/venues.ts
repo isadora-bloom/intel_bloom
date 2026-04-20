@@ -368,7 +368,7 @@ export const venuesRouter = router({
           const venueName = venueData?.name ?? "your venue";
 
           const inviteUrl = `${appUrl}/invite/${inviteToken}`;
-          const fromEmail = process.env.BRIEFING_FROM_EMAIL ?? "invites@bloomhq.co";
+          const fromEmail = process.env.BRIEFING_FROM_EMAIL ?? "invites@thebloomhouse.ai";
 
           const emailRes = await fetch("https://api.resend.com/emails", {
             method: "POST",
